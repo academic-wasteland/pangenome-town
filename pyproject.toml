@@ -9,7 +9,9 @@ description = "Gas City pack and tooling for a lab-hosted pangenome town in The 
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-dependencies = []
+dependencies = [
+  "research-commons-conformance @ git+https://github.com/academic-wasteland/research-commons@receiver-assertions",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3,<9", "ruff>=0.6"]
@@ -26,3 +28,6 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+
+[tool.hatch.metadata]
+allow-direct-references = true
