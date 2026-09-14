@@ -37,7 +37,7 @@ class RegionIri:
         return f"{PG}{ASSEMBLIES[self.region.assembly]}"
 
     def entity(self) -> dict:
-        return {"@id": self.iri, "@type": ["Dataset", self.class_iri], "name": str(self.region)}
+        return {"@id": self.iri, "@type": self.class_iri, "name": str(self.region)}
 
 
 def region_iri(town: str, region: Region) -> RegionIri:

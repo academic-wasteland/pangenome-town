@@ -67,6 +67,26 @@ def parser() -> argparse.ArgumentParser:
 
     commands.add_parser("doctor", help="check tools, data, and exchange log")
 
+    rcp = commands.add_parser("rcp", help="Research Commons Protocol operations")
+    rcp_commands = rcp.add_subparsers(dest="rcp_command", required=True)
+    rcp_commands.add_parser("render-contract", help="render this town's semantic contract into <city>/contract/")
+    rcp_commands.add_parser("agent-card", help="print this town's A2A Agent Card")
+    task = rcp_commands.add_parser("task", help="author a ResearchTask addressed to a peer town (prints JSON-LD)")
+    task.add_argument("--to", required=True, help="peer town name")
+    task.add_argument("--kind", required=True, choices=["summary", "subgraph", "haplotypes", "variants", "deconstruct", "compare"])
+    task.add_argument("--region")
+    task.add_argument("--on-behalf-of", help="principal IRI (ORCID, hop:// rig URI)")
+    submit = rcp_commands.add_parser("submit", help="send a ResearchTask to a peer town over A2A and print the task result")
+    submit.add_argument("--to", required=True)
+    submit.add_argument("--kind", required=True, choices=["summary", "subgraph", "haplotypes", "variants", "deconstruct", "compare"])
+    submit.add_argument("--region")
+    submit.add_argument("--on-behalf-of")
+    submit.add_argument("--task-file", type=Path, help="send this JSON-LD task instead of authoring one")
+    get = rcp_commands.add_parser("get", help="fetch a task from a peer town (tasks/get)")
+    get.add_argument("--to", required=True)
+    get.add_argument("task_id")
+    rcp_commands.add_parser("tasks", help="list this town's RCP tasks")
+
     dashboard = commands.add_parser("dashboard", help="serve the operator dashboard on loopback")
     dashboard.add_argument("--towns", nargs="+", type=Path, help="town.toml files to watch (default: --town or $PT_TOWNS)")
     dashboard.add_argument("--port", type=int, default=8390)
@@ -188,6 +208,9 @@ def _dispatch(arguments: argparse.Namespace) -> int:
             _print({"messages": log.list(limit=arguments.limit, town=None if arguments.all_towns else town.name)})
         return 0
 
+    if arguments.command == "rcp":
+        return _rcp(arguments, town, log)
+
     if arguments.command == "town-info":
         _print(envoy.EnvoyState(town, log, deliver=False).describe())
         return 0
@@ -216,3 +239,65 @@ def _dispatch(arguments: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+TASK_CLASSES = {
+    "summary": "GraphSummaryTask", "subgraph": "RegionExtractionTask", "haplotypes": "HaplotypePresenceTask",
+    "variants": "RegionVariantListingTask", "deconstruct": "WholeGraphDeconstructTask", "compare": "PopulationComparisonTask",
+}
+
+
+def _rcp(arguments: argparse.Namespace, town: config.TownConfig, log: ExchangeLog) -> int:
+    from .rcp import PG, a2a, contract, pipeline
+
+    if arguments.rcp_command == "render-contract":
+        manifest = contract.render(town, town.city_root / "contract")
+        _print({"manifest": str(manifest.path), "id": manifest.id, "bundleDigest": manifest.bundle_digest})
+        return 0
+    if arguments.rcp_command == "agent-card":
+        node = pipeline.Node(town, log=log)
+        _print(node.agent_card(f"{town.supervisor_url.rstrip('/')}/v0/city/{town.name}/svc/envoy"))
+        return 0
+    if arguments.rcp_command == "tasks":
+        node = pipeline.Node(town, log=log)
+        records = [pipeline.TaskRecord.load(d) for d in sorted(node.tasks_dir.iterdir()) if (d / "status.json").exists()]
+        _print([{"id": r.id, "state": r.state, "message": r.message} for r in records])
+        return 0
+    authoring = arguments.rcp_command == "task" or (arguments.rcp_command == "submit" and not arguments.task_file)
+    if authoring:
+        peer_town = config.load(_peer_town_toml(town, arguments.to))
+        region = graph.Region.parse(arguments.region, peer_town.default_assembly) if arguments.region else None
+        requester = f"https://w3id.org/academic-wasteland/{town.name}/agents/townsfolk"
+        document = pipeline.task_document(peer_town, f"{PG}{TASK_CLASSES[arguments.kind]}", requester=requester, region=region, on_behalf_of=arguments.on_behalf_of)
+        if arguments.rcp_command == "task":
+            _print(document)
+            return 0
+    elif arguments.rcp_command == "submit":
+        from research_commons.schema import load_json
+
+        document = load_json(arguments.task_file)
+    else:
+        document = {"@id": arguments.task_id}
+    request = {"jsonrpc": "2.0", "id": 1, "method": "message/send" if arguments.rcp_command == "submit" else "tasks/get",
+               "params": {"message": {"role": "user", "messageId": document["@id"], "metadata": {"town": town.name},
+                                      "parts": [{"kind": "data", "data": document, "metadata": {"mediaType": a2a.TASK_PROFILE}}]}}
+               if arguments.rcp_command == "submit" else {"id": arguments.task_id}}
+    url = peers.envoy_url(town, town.peer_city(arguments.to), "/a2a")
+    import urllib.request
+
+    data = json.dumps(request).encode("utf-8")
+    http_request = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json", "X-GC-Request": "pangenome-town", "X-Town": town.name})
+    with urllib.request.urlopen(http_request, timeout=600) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if arguments.rcp_command == "submit":
+        log.event(town.name, "rcp_submitted", document["@id"], {"to": arguments.to, "state": (payload.get("result") or {}).get("status", {}).get("state"), "url": url})
+    _print(payload)
+    return 0 if "result" in payload else 1
+
+
+def _peer_town_toml(town: config.TownConfig, peer: str) -> Path:
+    """Peer town.toml lives beside ours (same parent directory) in this deployment."""
+    candidate = town.city_root.parent / town.peer_city(peer) / "town.toml"
+    if not candidate.exists():
+        raise config.TownConfigError(f"cannot find peer town.toml at {candidate}")
+    return candidate

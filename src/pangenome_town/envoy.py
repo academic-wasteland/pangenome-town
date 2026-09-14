@@ -34,11 +34,28 @@ class ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStre
 
 
 class EnvoyState:
-    def __init__(self, town: TownConfig, log: ExchangeLog, *, deliver: bool = True):
+    def __init__(self, town: TownConfig, log: ExchangeLog, *, deliver: bool = True, node: Any | None = None):
         self.town = town
         self.log = log
         self.deliver = deliver
         self.lock = threading.Lock()
+        self._node = node
+        self._node_error: str | None = None
+
+    @property
+    def node(self) -> Any | None:
+        """The RCP node, created lazily once a contract has been rendered for this town."""
+        if self._node is None and self._node_error is None:
+            try:
+                from .rcp.pipeline import Node
+
+                self._node = Node(self.town, log=self.log)
+            except Exception as error:  # noqa: BLE001
+                self._node_error = f"{type(error).__name__}: {error}"
+        return self._node
+
+    def public_base_url(self) -> str:
+        return os.environ.get("GC_SERVICE_PUBLIC_URL") or f"{self.town.supervisor_url.rstrip('/')}/v0/city/{self.town.name}/svc/envoy"
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -51,7 +68,7 @@ class EnvoyState:
             "vcf_present": self.town.has_vcf,
             "reference_paths": list(self.town.reference_paths),
             "citation": self.town.citation,
-            "protocol": {"envelope_schema_version": 1, "rcp": "planned"},
+            "protocol": {"envelope_schema_version": 1, "rcp": "available" if self.node is not None else f"unavailable ({self._node_error})"},
         }
 
     def receive(self, payload: Any) -> tuple[int, dict[str, Any]]:
@@ -110,6 +127,24 @@ def make_handler(state: EnvoyState) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK, {"ok": True, "town": state.town.name})
                 elif route == "/v0/town":
                     self._json(HTTPStatus.OK, state.describe())
+                elif route == "/.well-known/agent-card.json":
+                    node = state.node
+                    if node is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "this town has no RCP contract yet", "detail": state._node_error})
+                    else:
+                        self._json(HTTPStatus.OK, node.agent_card(state.public_base_url()))
+                elif route.startswith("/v0/contract/"):
+                    name = urllib.parse.unquote(route[len("/v0/contract/"):])
+                    path = (state.town.city_root / "contract" / name).resolve()
+                    if "/" in name or not path.is_relative_to((state.town.city_root / "contract").resolve()) or not path.is_file():
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "no such contract file"})
+                    else:
+                        body = path.read_bytes()
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", "application/json" if name.endswith(".json") else "text/plain; charset=utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
                 elif route == "/v0/messages":
                     limit = min(int(query.get("limit", ["50"])[0]), 500)
                     self._json(HTTPStatus.OK, {"messages": state.log.list(limit=limit, town=state.town.name)})
@@ -130,7 +165,7 @@ def make_handler(state: EnvoyState) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             route = urllib.parse.urlparse(self.path).path.rstrip("/")
-            if route != "/v0/messages":
+            if route not in {"/v0/messages", "/a2a"}:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "no such route"})
                 return
             length = int(self.headers.get("Content-Length") or 0)
@@ -142,6 +177,19 @@ def make_handler(state: EnvoyState) -> type[BaseHTTPRequestHandler]:
                 payload = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "body is not JSON", "detail": str(error)})
+                return
+            if route == "/a2a":
+                from .rcp import a2a
+
+                node = state.node
+                if node is None:
+                    self._json(HTTPStatus.OK, a2a.error(payload.get("id") if isinstance(payload, dict) else None, a2a.INTERNAL, "this town has no RCP contract yet", state._node_error))
+                    return
+                try:
+                    self._json(HTTPStatus.OK, a2a.handle(node, payload, requester_hint=self.headers.get("X-Town")))
+                except Exception as error:  # noqa: BLE001
+                    traceback.print_exc()
+                    self._json(HTTPStatus.OK, a2a.error(payload.get("id") if isinstance(payload, dict) else None, a2a.INTERNAL, f"{type(error).__name__}: {error}"))
                 return
             try:
                 status, body = state.receive(payload)

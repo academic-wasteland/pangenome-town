@@ -28,7 +28,7 @@ def test_region_iri_round_trip():
     assert ref.class_iri.endswith("GRCh38Region")
     back = iri.parse_region_iri(ref.iri)
     assert back.region == region and back.town == "ubar"
-    assert ref.entity()["@type"][1] == ref.class_iri
+    assert ref.entity()["@type"] == ref.class_iri
     for bad in (
         "https://w3id.org/academic-wasteland/ubar/regions/GRCh38/chr6/10-5",
         "https://w3id.org/academic-wasteland/ubar/regions/hg19/chr6/1-2",
