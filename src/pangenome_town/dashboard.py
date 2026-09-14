@@ -372,7 +372,7 @@ class DashboardState:
         for town in self.towns.values():
             if town.kind != "authority":
                 continue
-            mail = self.supervisor(f"/v0/city/{town.name}/mail", timeout=3)
+            mail = self.supervisor(f"/v0/city/{town.name}/mail?status=all", timeout=3)  # recommendations stay visible after they are read
             recommendations: dict[str, list[dict[str, Any]]] = {}
             for item in (mail.get("items") if isinstance(mail, dict) else None) or []:
                 subject = str(item.get("subject") or "")
