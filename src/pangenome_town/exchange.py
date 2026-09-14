@@ -304,6 +304,7 @@ class ExchangeLog:
         """Questions addressed to `town` that were received but not yet dispatched to an agent."""
         rows = self._connection.execute(
             "SELECT m.* FROM messages m WHERE m.recipient = ? AND m.kind = 'question'"
+            " AND (m.status IS NULL OR m.status NOT LIKE 'rcp-%')"  # RCP tasks are handled by the pipeline, not by an agent
             " AND EXISTS (SELECT 1 FROM events e WHERE e.message_id = m.id AND e.town = ? AND e.kind = 'received')"
             " AND NOT EXISTS (SELECT 1 FROM events e WHERE e.message_id = m.id AND e.town = ? AND e.kind = 'dispatched')"
             " AND NOT EXISTS (SELECT 1 FROM messages a WHERE a.in_reply_to = m.id AND a.kind = 'answer')"

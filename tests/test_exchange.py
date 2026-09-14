@@ -57,3 +57,17 @@ def test_log_pending_and_answers(tmp_path):
     assert log.get(question.id)["status"] == "received"
     assert log.list(town="ubar")[0]["id"] == answer.id
     log.close()
+
+
+def test_rcp_mirrors_are_not_pending_questions(tmp_path):
+    from pangenome_town.exchange import Envelope, ExchangeLog, now_iso
+
+    log = ExchangeLog(tmp_path / "x.db")
+    try:
+        plain = Envelope(id="urn:uuid:11111111-1111-4111-8111-111111111111", kind="question", sender="ubar", recipient="yamatai", created=now_iso(), body={"text": "q"})
+        mirrored = Envelope(id="urn:uuid:22222222-2222-4222-8222-222222222222", kind="question", sender="ubar", recipient="yamatai", created=now_iso(), body={"text": "RCP completed"})
+        log.record(plain, town="yamatai", direction="received", status="received")
+        log.record(mirrored, town="yamatai", direction="received", status="rcp-completed")
+        assert [m["id"] for m in log.pending_questions("yamatai")] == [plain.id]
+    finally:
+        log.close()
