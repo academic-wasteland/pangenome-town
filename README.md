@@ -55,6 +55,8 @@ uv tool install --editable .        # gives you `pangenome-town` on PATH
 uv run --extra dev pytest
 ```
 
+Gas City resolves formula check scripts against the rig, so copy `scripts/pt-reply-check.sh` into `<city>/rig/scripts/` (the city bootstrap does this).
+
 Gas City side: import the pack from a city (`[imports.pangenome-town]` in
 `pack.toml`), add `townsfolk` to a rig, set `PT_TOWN_TOML` in the workspace
 env, and put `OPENROUTER_API_KEY` in `~/.gc/secrets.env`. See the Ubar repo
