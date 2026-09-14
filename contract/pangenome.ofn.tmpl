@@ -88,6 +88,7 @@ Ontology(<{{TOWN_IRI}}contract/ontology>
  SubClassOf(pg:RegionVariantListingTask ObjectSomeValuesFrom(:usesDataset pg:GenomicRegion))
  SubClassOf(pg:GeneLookupTask ObjectSomeValuesFrom(:usesDataset pg:Gene))
  SubClassOf(pg:ReadMappingVariantCallingTask ObjectSomeValuesFrom(:usesDataset pg:ReadSet))
+ SubClassOf(pg:PopulationComparisonTask ObjectSomeValuesFrom(:usesDataset pg:GenomicRegion))
 
  SubClassOf(pg:ReputableRequester :Actor)
  SubClassOf(pg:UnvettedRequester :Actor)
@@ -98,7 +99,7 @@ Ontology(<{{TOWN_IRI}}contract/ontology>
  SubClassOf(town:ServedGraph pg:PangenomeGraph)
  ClassAssertion(town:ServedGraph <{{TOWN_IRI}}graphs/{{GRAPH_ID}}>)
 
- EquivalentClasses(town:AcceptedBasicTask ObjectIntersectionOf(pg:BasicQueryTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy :Actor)))
+ EquivalentClasses(town:AcceptedBasicTask ObjectIntersectionOf(pg:BasicQueryTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy ObjectIntersectionOf(:Actor ObjectComplementOf(pg:BlockedRequester)))))
  EquivalentClasses(town:AcceptedLargeTask ObjectIntersectionOf(pg:LargeAnalysisTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy pg:ReputableRequester)))
  EquivalentClasses(town:AcceptedTask ObjectUnionOf(town:AcceptedBasicTask town:AcceptedLargeTask))
  EquivalentClasses(town:PermissionRequiredTask ObjectIntersectionOf(pg:LargeAnalysisTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy pg:UnvettedRequester)))

@@ -110,6 +110,39 @@ class DashboardState:
         message["agent_activity"] = opencode_activity(town.city_root / "rig", *window) if town and window else []
         return message
 
+    def ledger(self) -> dict[str, Any]:
+        """Wasteland commons view: standings plus recent wanted/completion/stamp rows."""
+        from .rcp import commons
+
+        ledger = None
+        for town in self.towns.values():
+            try:
+                ledger = commons.Commons.for_town(town)
+            except commons.CommonsError:
+                ledger = None
+            if ledger is not None:
+                break
+        if ledger is None:
+            return {"available": False}
+        try:
+            board = ledger.leaderboard()
+            stamps = ledger.rows("stamps", 50)
+            wanted = ledger.rows("wanted", 50)
+            completions = ledger.rows("completions", 50)
+        except commons.CommonsError as error:
+            return {"available": False, "error": str(error)}
+        for row in stamps:
+            if isinstance(row.get("valence"), str):
+                try:
+                    row["valence"] = json.loads(row["valence"])
+                except json.JSONDecodeError:
+                    pass
+        for row in wanted:
+            row["description"] = None  # the JSON-LD task is large; the exchange detail shows it
+        for row in completions:
+            row["evidence"] = None
+        return {"available": True, "commons": str(ledger.directory), "leaderboard": board, "stamps": stamps, "wanted": wanted, "completions": completions}
+
     def events_since(self, after: int, limit: int = 200) -> list[dict[str, Any]]:
         return self.log.events(None, limit=limit, after=after)
 
@@ -278,6 +311,8 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 elif route.startswith("/api/exchanges/"):
                     message = state.exchange(urllib.parse.unquote(route[len("/api/exchanges/"):]))
                     self._json(HTTPStatus.OK if message else HTTPStatus.NOT_FOUND, message or {"error": "unknown exchange"})
+                elif route == "/api/ledger":
+                    self._json(HTTPStatus.OK, state.ledger())
                 elif route == "/api/events":
                     after = int(query.get("after", ["0"])[0])
                     self._json(HTTPStatus.OK, {"events": state.events_since(after)})

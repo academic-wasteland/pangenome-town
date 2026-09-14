@@ -79,6 +79,9 @@ default_assembly = "GRCh38"
 [exchange]
 db = "{db}"
 supervisor_url = "http://127.0.0.1:1"
+
+[rcp]
+commons_dir = ""
 """
     path = city / "town.toml"
     path.write_text(text, encoding="utf-8")

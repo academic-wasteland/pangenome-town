@@ -21,7 +21,7 @@ from typing import Any
 
 from ..config import TownConfig
 
-KINDS = ("summary", "haplotypes", "variants", "subgraph")
+KINDS = ("summary", "haplotypes", "variants", "subgraph", "compare")
 REGION_RE = re.compile(r"^(?:(?P<assembly>[A-Za-z0-9_.]+):)?(?P<chrom>chr(?:[0-9]{1,2}|[XYM]|MT)):(?P<start>[0-9]{1,9})-(?P<end>[0-9]{1,9})$")
 MAX_REGION_SPAN = 5_000_000
 DEFAULT_TIMEOUT = 600
@@ -62,12 +62,14 @@ class Region:
 class Call:
     called: bool
     alt: bool
+    alleles: tuple[int | None, ...] = ()
 
     @classmethod
     def parse(cls, genotype: str) -> Call:
-        alleles = [allele for allele in re.split(r"[/|]", genotype.strip()) if allele != ""]
-        called = any(allele != "." for allele in alleles)
-        return cls(called=called, alt=any(allele not in {"0", "."} for allele in alleles))
+        raw = [allele for allele in re.split(r"[/|]", genotype.strip()) if allele != ""]
+        called = any(allele != "." for allele in raw)
+        alleles = tuple(int(allele) if allele.isdigit() else None for allele in raw)
+        return cls(called=called, alt=any(allele not in {"0", "."} for allele in raw), alleles=alleles)
 
 
 def _fingerprint(path: Path | None) -> dict[str, Any] | None:
@@ -322,6 +324,64 @@ class GraphTools:
             "provenance": prov.finish(),
         }
 
+    def compare(self, region: Region, out_dir: Path) -> dict[str, Any]:
+        """Population comparison (a LargeAnalysisTask): allele frequencies of the town's samples
+        against every other sample in the shipped VCF, site by site, within one region."""
+        prov = Provenance(self.town, "compare", region)
+        vcf = self._require_vcf()
+        bcftools = _which("bcftools")
+        header_samples = prov.run([bcftools, "query", "-l", str(vcf)]).stdout.decode().split()
+        town_samples = [sample for sample in self.town.samples if sample in header_samples]
+        others = [sample for sample in header_samples if sample not in set(self.town.samples) and not sample.startswith(("GRCh38", "CHM13"))]
+        if not town_samples or not others:
+            raise QueryError("population comparison needs the town's samples and at least one other sample in the VCF")
+        contigs = prov.run([bcftools, "index", "-s", str(vcf)]).stdout.decode()
+        contig_names = [line.split("\t")[0] for line in contigs.splitlines()]
+        candidates = [region.chrom, f"{region.assembly}#0#{region.chrom}", region.chrom.removeprefix("chr")]
+        contig = next((name for name in candidates if name in contig_names), None)
+        if contig is None:
+            raise QueryError(f"no VCF contig matches {region.chrom}; contigs start with {contig_names[:5]}")
+        window = f"{contig}:{region.start + 1}-{region.end}"
+        ordered = [*town_samples, *others]
+        subset = prov.run([bcftools, "view", "-r", window, "-s", ",".join(ordered), "--min-ac", "1:nref", "-Ou", str(vcf)]).stdout
+        query = prov.run([bcftools, "query", "-f", "%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n", "-"], stdin=subset).stdout.decode()
+        rows = [line.split("\t") for line in query.splitlines() if line]
+        sites = []
+        for row in rows:
+            calls = [Call.parse(value) for value in row[4:]]
+            town_calls, other_calls = calls[: len(town_samples)], calls[len(town_samples):]
+            town_af = _allele_frequency(town_calls)
+            other_af = _allele_frequency(other_calls)
+            if town_af is None or other_af is None:
+                continue
+            sites.append({"pos": int(row[1]), "ref": row[2], "alt": row[3], "town_af": round(town_af, 4), "other_af": round(other_af, 4), "delta": round(town_af - other_af, 4)})
+        differentiated = [site for site in sites if abs(site["delta"]) >= 0.5]
+        private = [site for site in sites if site["town_af"] > 0 and site["other_af"] == 0]
+        absent = [site for site in sites if site["town_af"] == 0 and site["other_af"] > 0]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        table_path = out_dir / f"compare_{region.chrom}_{region.start}_{region.end}.tsv"
+        header = ["POS", "REF", "ALT", "TOWN_AF", "OTHER_AF", "DELTA"]
+        table_path.write_text(
+            "\n".join(["\t".join(header), *("\t".join(str(site[key]) for key in ("pos", "ref", "alt", "town_af", "other_af", "delta")) for site in sites)]) + "\n",
+            encoding="utf-8",
+        )
+        top = sorted(sites, key=lambda site: -abs(site["delta"]))[:20]
+        return {
+            "kind": "compare",
+            "region": str(region),
+            "vcf_contig": contig,
+            "town_samples": town_samples,
+            "other_sample_count": len(others),
+            "sites_compared": len(sites),
+            "differentiated_sites": len(differentiated),
+            "town_private_sites": len(private),
+            "town_absent_sites": len(absent),
+            "mean_abs_delta": round(sum(abs(site["delta"]) for site in sites) / len(sites), 4) if sites else 0.0,
+            "top_differentiated": top,
+            "table": str(table_path),
+            "provenance": prov.finish(),
+        }
+
     def run(self, kind: str, region: Region | None, out_dir: Path) -> dict[str, Any]:
         if kind not in KINDS:
             raise QueryError(f"kind must be one of {KINDS}")
@@ -336,6 +396,18 @@ class GraphTools:
         out_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         result["artifact"] = str(out_path)
         return result
+
+
+def _allele_frequency(calls: list[Call]) -> float | None:
+    alleles = 0
+    alt = 0
+    for call in calls:
+        for value in call.alleles:
+            if value is None:
+                continue
+            alleles += 1
+            alt += 1 if value > 0 else 0
+    return alt / alleles if alleles else None
 
 
 def default_out_dir(town: TownConfig, label: str) -> Path:

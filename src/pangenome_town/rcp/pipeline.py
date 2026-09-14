@@ -24,7 +24,7 @@ from research_commons.semantic import SemanticValidator
 from ..config import TownConfig
 from ..exchange import Envelope, ExchangeLog, canonical
 from ..tools import graph
-from . import PG, contract, contribution, iri, reputation
+from . import PG, commons, contract, contribution, iri, reputation
 
 BASIC_KINDS = {
     f"{PG}GraphSummaryTask": "summary",
@@ -32,6 +32,10 @@ BASIC_KINDS = {
     f"{PG}HaplotypePresenceTask": "haplotypes",
     f"{PG}RegionVariantListingTask": "variants",
 }
+LARGE_KINDS = {
+    f"{PG}PopulationComparisonTask": "compare",
+}
+INLINE_KINDS = {**BASIC_KINDS, **LARGE_KINDS}
 STATES = ("submitted", "working", "input-required", "completed", "failed", "rejected", "canceled")
 
 
@@ -50,12 +54,13 @@ class TaskRecord:
     verdict: dict[str, Any] | None = None
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     context_id: str | None = None
+    ledger: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id, "state": self.state, "message": self.message, "directory": str(self.directory),
             "report": self.report, "verdict": self.verdict, "artifacts": self.artifacts, "context_id": self.context_id,
-            "contribution": self.contribution,
+            "contribution": self.contribution, "ledger": self.ledger,
         }
 
     def save(self) -> None:
@@ -67,14 +72,14 @@ class TaskRecord:
         return cls(
             id=data["id"], directory=directory, state=data["state"], message=data.get("message", ""),
             report=data.get("report"), contribution=data.get("contribution"), verdict=data.get("verdict"),
-            artifacts=data.get("artifacts") or [], context_id=data.get("context_id"),
+            artifacts=data.get("artifacts") or [], context_id=data.get("context_id"), ledger=data.get("ledger"),
         )
 
 
 class Node:
     """One town's RCP node: contract, validator, task store."""
 
-    def __init__(self, town: TownConfig, *, reasoner: Any | None = None, log: ExchangeLog | None = None, inline_basic: bool = True):
+    def __init__(self, town: TownConfig, *, reasoner: Any | None = None, log: ExchangeLog | None = None, inline_basic: bool = True, ledger: commons.Commons | None = None):
         self.town = town
         self.log = log
         self.inline_basic = inline_basic
@@ -90,6 +95,7 @@ class Node:
         self.validator = SemanticValidator(self.manifest, reasoner) if reasoner is not None else None
         self.tasks_dir = town.state_dir / "rcp" / "tasks"
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.ledger = ledger if ledger is not None else _default_ledger(town)
 
     # Discovery --------------------------------------------------------------------------
     def agent_card(self, base_url: str) -> dict[str, Any]:
@@ -108,7 +114,10 @@ class Node:
             "skills": [
                 {"id": kind, "name": f"{cls.rsplit('/', 1)[1]}", "description": f"Deterministic {kind} query over the served graph", "tags": ["pangenome", "basic"]}
                 for cls, kind in BASIC_KINDS.items()
-            ] + [{"id": "large", "name": "LargeAnalysisTask", "description": "Reputation-gated analyses (whole-graph deconstruct, read mapping, population comparison)", "tags": ["pangenome", "large"]}],
+            ] + [
+                {"id": kind, "name": f"{cls.rsplit('/', 1)[1]}", "description": f"Reputation-gated {kind} analysis over the served graph (needs ReputableRequester standing in the commons)", "tags": ["pangenome", "large"]}
+                for cls, kind in LARGE_KINDS.items()
+            ],
             "town": {"name": self.town.name, "population": self.town.population, "samples": list(self.town.samples), "citation": self.town.citation},
         }
 
@@ -156,7 +165,7 @@ class Node:
             return
         requester = _iri(document.get("requestedBy"))
         principal = _iri(document.get("onBehalfOf")) or requester
-        verdict = reputation.judge(self.town, principal or "urn:unknown")
+        verdict = reputation.judge(self.town, principal or "urn:unknown", ledger=self.ledger)
         record.verdict = verdict.as_dict()
         if self.validator is None:
             record.state = "failed"
@@ -184,7 +193,7 @@ class Node:
                 record.state, record.message = "input-required", "the contract cannot establish that this task is admissible; clarify the task class, dataset, or region"
             return
         # entailed: admissible.
-        kind = BASIC_KINDS.get(str(document.get("taskType")))
+        kind = INLINE_KINDS.get(str(document.get("taskType")))
         if kind and self.inline_basic:
             self._execute_basic(record, document, kind, started)
         else:
@@ -217,6 +226,24 @@ class Node:
         record.report = {"task": record.report, "contribution": report}
         record.state = "completed"
         record.message = f"{kind} query completed in {time.time() - started:.1f}s"
+        record.ledger = self._record_completion(document, built)
+
+    def _record_completion(self, task: dict[str, Any], built: dict[str, Any]) -> dict[str, Any] | None:
+        """Mirror the task and our contribution into the Wasteland commons (best effort)."""
+        if self.ledger is None:
+            return None
+        requester = _iri(task.get("requestedBy")) or "urn:unknown"
+        posted_by = commons.handle_for(requester)
+        try:
+            self.ledger.ensure_rig(self.town.name, display_name=f"{self.town.display} pangenome town", hop_uri=self._card_url(), rig_type="agent")
+            wanted = self.ledger.post_task(task, posted_by=posted_by)
+            completion = self.ledger.post_completion(built, completed_by=self.town.name, hop_uri=self._card_url())
+        except (commons.CommonsError, ValueError, TypeError) as error:
+            return {"error": f"{type(error).__name__}: {error}"}
+        return {"wanted": wanted, "completion": completion, "completed_by": self.town.name, "posted_by": posted_by}
+
+    def _card_url(self) -> str:
+        return f"{self.town.supervisor_url.rstrip('/')}/v0/city/{self.town.name}/svc/envoy/.well-known/agent-card.json"
 
     def _mirror(self, record: TaskRecord, document: Any, requester_hint: str | None) -> None:
         if self.log is None:
@@ -227,8 +254,15 @@ class Node:
         body = {"text": text, "rcp_task_type": task_type, "rcp_state": record.state, "region": _region_text(document)}
         envelope = Envelope(id=record.id, kind="question", sender=sender, recipient=self.town.name, created=_now(), body=body)
         self.log.record(envelope, town=self.town.name, direction="received", status=f"rcp-{record.state}")
-        self.log.set_rcp(record.id, {"task": document, "report": record.report, "verdict": record.verdict, "state": record.state, "contribution": record.contribution})
+        self.log.set_rcp(record.id, {"task": document, "report": record.report, "verdict": record.verdict, "state": record.state, "contribution": record.contribution, "ledger": record.ledger})
         self.log.event(self.town.name, f"rcp_{record.state.replace('-', '_')}", record.id, {"message": record.message})
+
+
+def _default_ledger(town: TownConfig) -> commons.Commons | None:
+    try:
+        return commons.Commons.for_town(town)
+    except commons.CommonsError:
+        return None
 
 
 def _types(document: dict[str, Any]) -> list[str]:

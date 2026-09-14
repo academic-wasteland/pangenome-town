@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config, envoy, mail, peers
-from .exchange import Attachment, Envelope, EnvelopeError, ExchangeLog
+from .exchange import Attachment, Envelope, EnvelopeError, ExchangeLog, sha256_file
 from .tools import graph
 
 
@@ -86,6 +86,20 @@ def parser() -> argparse.ArgumentParser:
     get.add_argument("--to", required=True)
     get.add_argument("task_id")
     rcp_commands.add_parser("tasks", help="list this town's RCP tasks")
+
+    ledger = commands.add_parser("commons", help="Wasteland commons: this town's reputation ledger")
+    ledger_commands = ledger.add_subparsers(dest="commons_command", required=True)
+    ledger_commands.add_parser("init", help="register this town as a rig in the commons")
+    score = ledger_commands.add_parser("score", help="reputation standing of a handle or IRI (default: this town)")
+    score.add_argument("handle", nargs="?")
+    ledger_commands.add_parser("leaderboard", help="standing of every known handle")
+    rows = ledger_commands.add_parser("rows", help="dump recent rows of a commons table")
+    rows.add_argument("table", choices=["rigs", "wanted", "completions", "stamps"])
+    rows.add_argument("--limit", type=int, default=20)
+    stamp = ledger_commands.add_parser("stamp", help="stamp a peer's completion from a validation report (author = this town)")
+    stamp.add_argument("--subject", required=True, help="handle of the contributing town")
+    stamp.add_argument("--completion", required=True, help="completion id (c-...)")
+    stamp.add_argument("--report", required=True, type=Path, help="semantic validation report JSON")
 
     dashboard = commands.add_parser("dashboard", help="serve the operator dashboard on loopback")
     dashboard.add_argument("--towns", nargs="+", type=Path, help="town.toml files to watch (default: --town or $PT_TOWNS)")
@@ -210,6 +224,8 @@ def _dispatch(arguments: argparse.Namespace) -> int:
 
     if arguments.command == "rcp":
         return _rcp(arguments, town, log)
+    if arguments.command == "commons":
+        return _commons(arguments, town, log)
 
     if arguments.command == "town-info":
         _print(envoy.EnvoyState(town, log, deliver=False).describe())
@@ -290,9 +306,106 @@ def _rcp(arguments: argparse.Namespace, town: config.TownConfig, log: ExchangeLo
     with urllib.request.urlopen(http_request, timeout=600) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if arguments.rcp_command == "submit":
-        log.event(town.name, "rcp_submitted", document["@id"], {"to": arguments.to, "state": (payload.get("result") or {}).get("status", {}).get("state"), "url": url})
+        task_result = payload.get("result") or {}
+        state = task_result.get("status", {}).get("state")
+        log.event(town.name, "rcp_submitted", document["@id"], {"to": arguments.to, "state": state, "url": url})
+        if state == "completed":
+            stamped = _stamp_peer_result(town, arguments.to, task_result)
+            log.event(town.name, "rcp_stamped" if stamped.get("stamp") else "rcp_stamp_skipped", document["@id"], stamped)
+            payload["ledger"] = stamped
     _print(payload)
     return 0 if "result" in payload else 1
+
+
+def _stamp_peer_result(town: config.TownConfig, peer: str, task_result: dict[str, Any]) -> dict[str, Any]:
+    """Pay the peer in reputation: verify what came back and stamp its completion in the commons.
+
+    Verification here is what the requester can check on its own: the contribution is a structurally
+    valid ResearchContribution addressing our task, and the artifact digest it cites matches the file
+    the peer wrote. The peer's own semantic report is carried inside the stamp for third parties.
+    """
+    from research_commons import wasteland as wl
+    from research_commons.schema import StructuralValidationError, validate_message
+
+    from .rcp import commons
+
+    ledger = commons.Commons.for_town(town)
+    if ledger is None:
+        return {"skipped": "no commons configured"}
+    contribution = report = None
+    files: dict[str, str] = {}
+    for artifact in task_result.get("artifacts") or []:
+        for part in artifact.get("parts") or []:
+            if part.get("kind") == "data" and artifact.get("name") == "contribution.jsonld":
+                contribution = part["data"]
+            elif part.get("kind") == "data" and artifact.get("name") == "semantic-validation-report.json":
+                report = part["data"]
+            elif part.get("kind") == "file":
+                files[part["file"]["name"]] = part["file"].get("uri", "")
+    if not isinstance(contribution, dict):
+        return {"skipped": "no contribution returned"}
+    problems: list[str] = []
+    try:
+        validate_message(contribution)
+    except StructuralValidationError as error:
+        problems.append(f"structure: {error}")
+    for output in contribution.get("hasOutput") or []:
+        path = files.get(output.get("name", ""))
+        if path and Path(path).exists():
+            actual = sha256_file(Path(path))
+            if actual != output.get("digest"):
+                problems.append(f"digest mismatch for {output.get('name')}")
+        else:
+            problems.append(f"artifact {output.get('name')} not readable here")
+    peer_report = (report or {}).get("contribution") if isinstance(report, dict) else None
+    if not isinstance(peer_report, dict) or "status" not in peer_report:
+        return {"skipped": "peer returned no contribution report", "problems": problems}
+    stamped_report = dict(peer_report)
+    if problems:
+        stamped_report["status"] = "invalid"
+        stamped_report["checks"] = [*peer_report.get("checks", []), {"kind": "requester-verification", "status": "invalid", "durationMs": 0, "diagnostic": "; ".join(problems)}]
+    else:
+        stamped_report["checks"] = [*peer_report.get("checks", []), {"kind": "requester-verification", "status": "entailed", "durationMs": 0}]
+    completion = wl.completion_id(contribution["@id"])
+    subject = town.peer_city(peer)
+    try:
+        ledger.ensure_rig(town.name, display_name=f"{town.display} pangenome town", rig_type="agent")
+        stamp = ledger.post_stamp(stamped_report, author=town.name, subject=subject, completion=completion)
+    except (commons.CommonsError, ValueError) as error:
+        return {"error": f"{type(error).__name__}: {error}", "problems": problems}
+    return {"stamp": stamp, "completion": completion, "subject": subject, "status": stamped_report["status"], "problems": problems}
+
+
+def _commons(arguments: argparse.Namespace, town: config.TownConfig, log: ExchangeLog) -> int:
+    from .rcp import commons
+
+    ledger = commons.Commons.for_town(town)
+    if ledger is None:
+        print("no commons found: run `wl create <org>/commons --local-only` or set [rcp].commons_dir in town.toml", file=sys.stderr)
+        return 2
+    if arguments.commons_command == "init":
+        card = f"{town.supervisor_url.rstrip('/')}/v0/city/{town.name}/svc/envoy/.well-known/agent-card.json"
+        ledger.ensure_rig(town.name, display_name=f"{town.display} pangenome town", hop_uri=card, rig_type="agent")
+        _print({"commons": str(ledger.directory), "rig": town.name, "hop_uri": card})
+        return 0
+    if arguments.commons_command == "score":
+        handle = commons.handle_for(arguments.handle) if arguments.handle else town.name
+        _print(ledger.standing(handle).as_dict())
+        return 0
+    if arguments.commons_command == "leaderboard":
+        _print(ledger.leaderboard())
+        return 0
+    if arguments.commons_command == "rows":
+        _print(ledger.rows(arguments.table, arguments.limit))
+        return 0
+    if arguments.commons_command == "stamp":
+        from research_commons.schema import load_json
+
+        stamp = ledger.post_stamp(load_json(arguments.report), author=town.name, subject=arguments.subject, completion=arguments.completion)
+        log.event(town.name, "rcp_stamped", arguments.completion, {"stamp": stamp, "subject": arguments.subject})
+        _print({"stamp": stamp})
+        return 0
+    return 1
 
 
 def _peer_town_toml(town: config.TownConfig, peer: str) -> Path:

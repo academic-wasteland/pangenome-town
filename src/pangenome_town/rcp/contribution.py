@@ -21,6 +21,7 @@ QUANTITIES = {
     "haplotypes": [("distinct_threads", "distinctHaplotypeCount"), ("haplotypes_traced", "tracedHaplotypeCount")],
     "subgraph": [("segments", "segmentCount"), ("links", "linkCount"), ("paths", "pathCount")],
     "summary": [("paths_total", "pathCount"), ("graph.nodes", "nodeCount"), ("graph.edges", "edgeCount")],
+    "compare": [("sites_compared", "comparedSiteCount"), ("differentiated_sites", "differentiatedSiteCount"), ("town_private_sites", "populationPrivateSiteCount"), ("mean_abs_delta", "meanAbsoluteFrequencyDifference")],
 }
 
 

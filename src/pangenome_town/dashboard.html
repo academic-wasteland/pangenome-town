@@ -52,6 +52,11 @@ a{color:var(--accent)}
   <div class="lanes" id="lanes"></div>
 </section>
 
+<section>
+  <h2>Ledger: Wasteland commons <span class="muted" id="ledger-where"></span></h2>
+  <div id="ledger" class="row"></div>
+</section>
+
 <section id="detail" hidden>
   <h2>Exchange detail</h2>
   <div id="detail-body"></div>
@@ -63,7 +68,37 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"
 const fmtTs = (t) => { if (!t) return ""; const d = typeof t === "number" ? new Date(t*1000) : new Date(t); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); };
 let towns = [], laneOrder = [], selected = null, lastSeq = 0;
 
-function statusClass(s){ return {answered:"ok",delivered:"ok",sent:"ok",received:"warn",dispatched:"warn",sending:"warn",failed:"bad",delivery_failed:"bad"}[s] || "muted"; }
+function statusClass(s){ return {answered:"ok",delivered:"ok",sent:"ok",received:"warn",dispatched:"warn",sending:"warn",failed:"bad",delivery_failed:"bad","rcp-completed":"ok","rcp-working":"warn","rcp-input-required":"warn","rcp-rejected":"bad","rcp-failed":"bad",entailed:"ok",unknown:"warn",contradicted:"bad",invalid:"bad",indeterminate:"bad",reputable:"ok",unvetted:"warn",blocked:"bad"}[s] || "muted"; }
+
+function renderRcp(rcp){
+  if (!rcp) return "";
+  const v = rcp.verdict || {}; const rep = rcp.report || {};
+  const checks = (r) => r && r.checks ? `<table>${r.checks.map(c => `<tr><td>${esc(c.kind)}</td><td><span class="status ${statusClass(c.status)}">${esc(c.status)}</span></td><td class="muted">${c.durationMs} ms</td><td class="muted">${esc((c.diagnostic||"").slice(0,120))}</td></tr>`).join("")}</table>` : '<span class="muted">none</span>';
+  const task = rcp.task || {}; const claims = (rcp.contribution||{}).hasClaim || [];
+  return `<h2>Research Commons Protocol</h2>
+    <div class="card">
+      <div><span class="chip ${statusClass("rcp-"+rcp.state)}">${esc(rcp.state)}</span> <span class="mono muted">${esc((task.taskType||"").split("/").pop())}</span></div>
+      <div style="margin-top:6px">requester <span class="mono">${esc((task.requestedBy||{})["@id"]||"")}</span> → standing <span class="status ${statusClass(v.standing)}">${esc(v.standing||"?")}</span>${v.score!=null?` (score ${v.score})`:""} <span class="muted">${esc(v.reason||"")}</span></div>
+      <div class="muted" style="margin-top:4px">contract ${esc(task.semanticContract||"")} · profile ${esc((task.ontologyProfile||"").slice(0,23))}…</div>
+      ${rcp.ledger ? `<div class="muted" style="margin-top:4px">commons: ${esc(JSON.stringify(rcp.ledger))}</div>` : ""}
+      <h2>Task validation ${rep.task?`· <span class="status ${statusClass(rep.task.status)}">${esc(rep.task.status)}</span>`:rep.status?`· <span class="status ${statusClass(rep.status)}">${esc(rep.status)}</span>`:""}</h2>${checks(rep.task||rep)}
+      ${rep.contribution ? `<h2>Contribution validation · <span class="status ${statusClass(rep.contribution.status)}">${esc(rep.contribution.status)}</span></h2>${checks(rep.contribution)}` : ""}
+      ${claims.length ? `<h2>Claims</h2><ul>${claims.map(c => `<li>${esc(c.statement)}</li>`).join("")}</ul>` : ""}
+      <details><summary>task JSON-LD</summary><pre>${esc(JSON.stringify(task,null,1))}</pre></details>
+      ${rcp.contribution ? `<details><summary>contribution JSON-LD</summary><pre>${esc(JSON.stringify(rcp.contribution,null,1))}</pre></details>` : ""}
+    </div>`;
+}
+
+async function loadLedger(){
+  const r = await fetch("/api/ledger"); const j = await r.json();
+  if (!j.available){ $("#ledger").innerHTML = `<span class="muted">no commons joined (${esc(j.error||"run wl create ... --local-only")})</span>`; return; }
+  $("#ledger-where").textContent = j.commons;
+  const board = `<div><h2>Standing</h2><table><tr><th>handle</th><th>score</th><th>stamps</th><th>stampers</th><th>last stamp</th></tr>${j.leaderboard.map(b => `<tr><td>${esc(b.handle)}</td><td>${b.score}</td><td>${b.stamps}</td><td>${b.authors}</td><td class="muted">${esc(b.last_stamp||"")}</td></tr>`).join("")}</table></div>`;
+  const stamps = `<div><h2>Recent stamps</h2><table><tr><th>when</th><th>author</th><th>subject</th><th>status</th><th>quality</th><th>completion</th></tr>${j.stamps.map(s => `<tr><td class="muted">${esc(s.created_at)}</td><td>${esc(s.author)}</td><td>${esc(s.subject)}</td><td><span class="status ${statusClass((s.valence||{}).rcp_status)}">${esc((s.valence||{}).rcp_status||"")}</span></td><td>${(s.valence||{}).quality ?? ""}</td><td class="mono muted">${esc(s.context_id||"")}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">none yet</td></tr>'}</table></div>`;
+  const wanted = `<div><h2>Wanted and completions</h2><table><tr><th>wanted</th><th>title</th><th>posted by</th><th>status</th></tr>${j.wanted.map(w => `<tr><td class="mono">${esc(w.id)}</td><td>${esc(w.title)}</td><td>${esc(w.posted_by)}</td><td>${esc(w.status)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">none yet</td></tr>'}</table>
+    <table style="margin-top:8px"><tr><th>completion</th><th>wanted</th><th>by</th><th>validated by</th></tr>${j.completions.map(c => `<tr><td class="mono">${esc(c.id)}</td><td class="mono">${esc(c.wanted_id)}</td><td>${esc(c.completed_by)}</td><td>${esc(c.validated_by||"")}</td></tr>`).join("")}</table></div>`;
+  $("#ledger").innerHTML = board + stamps + wanted;
+}
 
 async function loadTowns(){
   const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = towns.map(t => t.name);
@@ -91,7 +126,7 @@ async function loadExchanges(){
     const mine = xs.filter(x => x.from === name);
     return `<div class="lane-${i%2?"b":"a"}"><div class="hdr">${esc(name)} <span class="muted">sent ${mine.length}</span></div>` +
       mine.map(x => `<div class="msg ${selected===x.id?"sel":""}" data-id="${esc(x.id)}">
-        <div class="k">${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
+        <div class="k">${x.rcp?'<span class="chip">RCP</span> ':''}${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
         <div class="t">${esc((x.envelope.body.text||"").slice(0,220))}</div>
         ${x.envelope.body.region?`<div class="mono muted">${esc(x.envelope.body.region)}</div>`:""}
       </div>`).join("") + `</div>`;
@@ -118,6 +153,7 @@ async function select(id){
         <h2>Timeline</h2><ul class="tl">${x.timeline.map(s => `<li><span class="mono muted">${fmtTs(s.ts)}</span> <strong>${esc(s.town)}</strong> ${esc(s.kind)} ${Object.keys(s.detail||{}).length?`<span class="muted mono">${esc(JSON.stringify(s.detail).slice(0,160))}</span>`:""}</li>`).join("")}</ul>
         <h2>Answers</h2>${x.answers.length ? x.answers.map(a => `<div class="card"><div class="k muted">${esc(a.from)} · ${esc(a.created)} · ${esc(a.status)}</div><div style="margin-top:4px">${esc(a.envelope.body.text||"")}</div>${a.envelope.body.result?`<pre>${esc(JSON.stringify(a.envelope.body.result,null,1))}</pre>`:""}<div style="margin-top:6px">${artifacts(a.artifacts||[])}</div></div>`).join("") : '<span class="muted">no answer yet</span>'}
         <h2>Attachments on this message</h2>${artifacts(x.artifacts||[])}
+        ${renderRcp(x.rcp)}
       </div>
       <div>
         <h2>Agent activity in ${esc(x.to)}</h2>${activity}
@@ -147,11 +183,12 @@ function connect(){
   const es = new EventSource("/api/events/stream?after=" + lastSeq);
   es.onopen = () => { $("#live").textContent = "on"; $("#live").className = "ok"; };
   es.onerror = () => { $("#live").textContent = "reconnecting"; $("#live").className = "warn"; };
-  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); });
+  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); });
 }
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
 setInterval(loadTowns, 30000);
-loadTowns().then(loadExchanges).then(connect);
+loadTowns().then(loadExchanges).then(loadLedger).then(connect);
+setInterval(loadLedger, 60000);
 </script>
 </body>
 </html>

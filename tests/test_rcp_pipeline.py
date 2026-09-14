@@ -5,6 +5,7 @@ import pytest
 from research_commons.km import Classification
 
 from pangenome_town.exchange import ExchangeLog
+from pangenome_town.tools import graph
 from pangenome_town.rcp import PG, a2a, contract, pipeline
 from pangenome_town.tools.graph import Region
 
@@ -42,7 +43,7 @@ def node(towns, tmp_path):
     ubar = towns["ubar"]
     contract.render(ubar, ubar.city_root / "contract")
     ubar.city_root.joinpath("town.toml").write_text(
-        ubar.city_root.joinpath("town.toml").read_text() + '\n[rcp]\ntrusted_requesters = ["https://orcid.org/0000-0001-8149-5890"]\nblocked_requesters = ["https://evil.example/agent"]\n',
+        ubar.city_root.joinpath("town.toml").read_text() + '\ntrusted_requesters = ["https://orcid.org/0000-0001-8149-5890"]\nblocked_requesters = ["https://evil.example/agent"]\n',
         encoding="utf-8",
     )
     from pangenome_town import config
@@ -120,3 +121,58 @@ def test_without_reasoner_nothing_executes(towns):
     task = _send(node, document)["result"]
     assert task["status"]["state"] == "failed" and task["metadata"]["verdict"]["standing"] == "unvetted"
     assert json.loads(json.dumps(task))["artifacts"][0]["name"] == "semantic-validation-report.json"
+
+
+class MemoryLedger:
+    """In-memory stand-in for the Wasteland commons: stamps decide standing, rows are recorded."""
+
+    directory = "memory"
+
+    def __init__(self):
+        self.stamps: dict[str, list[dict]] = {}
+        self.rows: list[tuple[str, str]] = []
+
+    def standing(self, handle):
+        from pangenome_town.rcp.commons import standing_from_stamps
+
+        return standing_from_stamps(handle, self.stamps.get(handle, []))
+
+    def ensure_rig(self, handle, **_):
+        self.rows.append(("rig", handle))
+
+    def post_task(self, task, *, posted_by, project="pangenome"):
+        self.rows.append(("wanted", posted_by))
+        return "w-test"
+
+    def post_completion(self, contribution, *, completed_by, hop_uri=None):
+        self.rows.append(("completion", completed_by))
+        return "c-test"
+
+
+def test_reputation_from_commons_pays_for_a_large_analysis(towns, tmp_path):
+    ubar = towns["ubar"]
+    contract.render(ubar, ubar.city_root / "contract")
+    ledger = MemoryLedger()
+    log = ExchangeLog(towns["db"])
+    try:
+        node = pipeline.Node(ubar, reasoner=ContractReasoner(), log=log, ledger=ledger)
+        requester = "https://w3id.org/academic-wasteland/yamatai/agents/townsfolk"
+        region = graph.Region.parse("GRCh38:chr1:0-100", "GRCh38")
+        compare = pipeline.task_document(ubar, f"{PG}PopulationComparisonTask", requester=requester, region=region)
+        first = _send(node, compare)["result"]
+        assert first["status"]["state"] == "input-required" and first["metadata"]["verdict"]["standing"] == "unvetted"
+        from datetime import UTC, datetime
+
+        fresh = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        ledger.stamps["yamatai"] = [{"author": "ubar", "subject": "yamatai", "valence": {"quality": 1.0}, "confidence": 1.0, "severity": "leaf", "created_at": fresh}]
+        second = _send(node, pipeline.task_document(ubar, f"{PG}PopulationComparisonTask", requester=requester, region=region))["result"]
+        assert second["metadata"]["verdict"]["standing"] == "reputable"
+        if shutil.which("bcftools") and shutil.which("vg"):
+            assert second["status"]["state"] == "completed"
+            claims = [c["statement"] for a in second["artifacts"] for p in a["parts"] if a["name"] == "contribution.jsonld" for c in p["data"]["hasClaim"]]
+            assert any("comparedSiteCount" in c and "is 3" in c for c in claims)
+            assert ("completion", "ubar") in ledger.rows and ("wanted", "yamatai") in ledger.rows
+            record = node.get(second["id"])
+            assert record.ledger == {"wanted": "w-test", "completion": "c-test", "completed_by": "ubar", "posted_by": "yamatai"}
+    finally:
+        log.close()
