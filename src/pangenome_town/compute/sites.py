@@ -4,6 +4,11 @@ A site is declared in `town.toml` as `[[sites]]`. The capability to use it (a lo
 alias whose key lives in the user's agent or keyring) stays with the town; nothing here ever reads or
 transmits a key. Every subprocess call uses an argument list. The only command string that exists is
 the remote command passed to `ssh`, and it is assembled from `shlex.quote`d pieces.
+
+Some clusters only accept jobs from a login node behind a gateway (DDBJ: `ssh gw`, then `ssh a001` and
+`sbatch` there). A site's `submit_host` names that node; every remote step then runs as
+`ssh <host> ssh <submit_host> <command>`, so the gateway's trusted host keys are used and nothing is
+assumed about files being shared between the gateway and the login node.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
 TOOL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 DATASET_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+PARTITION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 SLURM_FAILED = {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE"}
 STDERR_TAIL = 2000
 
@@ -40,6 +46,8 @@ class Site:
     host: str | None = None
     workdir: str | None = None
     scheduler: str = "none"
+    submit_host: str | None = None
+    partition: str | None = None
     datasets: tuple[str, ...] = ()
     paths: dict[str, str] = field(default_factory=dict)
     tools: tuple[str, ...] = ("vg", "bcftools")
@@ -53,7 +61,8 @@ class Site:
     def as_dict(self) -> dict[str, Any]:
         return {
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
-            "scheduler": self.scheduler, "datasets": list(self.datasets), "tools": list(self.tools),
+            "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition,
+            "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
         }
 
@@ -105,6 +114,12 @@ def load_sites(town: TownConfig) -> list[Site]:
         workdir = entry.get("workdir")
         if host is not None and (not isinstance(host, str) or not HOST_RE.match(host)):
             raise ComputeError(f"site {name}: host {host!r} is not a plain SSH alias or hostname")
+        submit_host = entry.get("submit_host")
+        if submit_host is not None and (not isinstance(submit_host, str) or not HOST_RE.match(submit_host)):
+            raise ComputeError(f"site {name}: submit_host {submit_host!r} is not a plain SSH alias or hostname")
+        partition = entry.get("partition")
+        if partition is not None and (not isinstance(partition, str) or not PARTITION_RE.match(partition)):
+            raise ComputeError(f"site {name}: partition {partition!r} is not a plain Slurm partition name")
         if workdir is not None and not isinstance(workdir, str):
             raise ComputeError(f"site {name}: workdir must be a string")
         datasets = tuple(str(item) for item in entry.get("datasets") or ())
@@ -116,6 +131,8 @@ def load_sites(town: TownConfig) -> list[Site]:
         for tool in tools:
             if not TOOL_RE.match(tool):
                 raise ComputeError(f"site {name}: tool {tool!r} is not a plain executable name")
+        if driver != "ssh" and submit_host:
+            raise ComputeError(f"site {name}: submit_host needs the ssh driver")
         if driver == "ssh":
             if not host:
                 raise ComputeError(f"site {name}: the ssh driver needs host (an SSH alias)")
@@ -134,6 +151,7 @@ def load_sites(town: TownConfig) -> list[Site]:
                 workdir = str(_local_path(town, workdir))
         sites.append(Site(
             name=name, driver=driver, enabled=enabled, host=host, workdir=workdir, scheduler=scheduler,
+            submit_host=submit_host, partition=partition,
             datasets=datasets, paths=paths, tools=tools,
             max_cpus=_positive_int(entry, "max_cpus", 4, name),
             max_mem_gb=_positive_int(entry, "max_mem_gb", 16, name),
@@ -158,7 +176,7 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
     """Whether this town can use the site right now, with a human-readable reason."""
     if not site.enabled:
         return False, "disabled in town.toml"
-    key = (site.name, site.host, site.driver, tuple(sorted(site.paths.items())), site.tools)
+    key = (site.name, site.host, site.submit_host, site.driver, tuple(sorted(site.paths.items())), site.tools)
     now = time.monotonic()
     cached = _REACHABILITY.get(key)
     if cached is not None and now - cached[0] < cache_seconds:
@@ -174,11 +192,13 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
             problems.append(f"datasets missing: {', '.join(missing_data)}")
         detail = "tools and datasets present" if ok else "; ".join(problems)
     else:
-        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", str(site.host), "true"]
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", str(site.host)]
+        argv.append(shlex.join(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", site.submit_host, "true"]) if site.submit_host else "true")
+        route = f"{site.host} then {site.submit_host}" if site.submit_host else str(site.host)
         try:
-            result = runner(argv, capture_output=True, text=True, timeout=30, check=False)
+            result = runner(argv, capture_output=True, text=True, timeout=45, check=False)
             ok = result.returncode == 0
-            detail = f"ssh {site.host} answered" if ok else f"ssh {site.host} failed ({result.returncode}): {(result.stderr or '').strip()[-300:]}"
+            detail = f"ssh {route} answered" if ok else f"ssh {route} failed ({result.returncode}): {(result.stderr or '').strip()[-300:]}"
         except (OSError, subprocess.TimeoutExpired) as error:
             ok, detail = False, f"ssh {site.host} unreachable: {error}"
     _REACHABILITY[key] = (now, ok, detail)
@@ -296,15 +316,21 @@ class SshDriver:
             lines.append(line)
         return "\n".join(lines) + "\n"
 
+    def _wrap(self, remote: str) -> str:
+        """The command the gateway runs: the remote command itself, or an ssh hop to the submit host."""
+        if self.site.submit_host:
+            return shlex.join(["ssh", "-o", "BatchMode=yes", self.site.submit_host, remote])
+        return remote
+
     def _ssh(self, remote: str, *, input_text: str | None = None, timeout: float = 120) -> subprocess.CompletedProcess[str]:
-        argv = ["ssh", "-o", "BatchMode=yes", str(self.site.host), remote]
+        argv = ["ssh", "-o", "BatchMode=yes", str(self.site.host), self._wrap(remote)]
         try:
             return self.runner(argv, input=input_text, capture_output=True, text=True, timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ComputeError(f"ssh {self.site.host} failed: {error}") from error
 
     def _record(self, log: list[dict[str, Any]], label: str, remote: str, result: subprocess.CompletedProcess[str], started: float) -> None:
-        log.append({"step": label, "argv": ["ssh", "-o", "BatchMode=yes", str(self.site.host), remote], "returncode": result.returncode,
+        log.append({"step": label, "argv": ["ssh", "-o", "BatchMode=yes", str(self.site.host), self._wrap(remote)], "returncode": result.returncode,
                     "seconds": round(time.monotonic() - started, 3), "stderr_tail": (result.stderr or "")[-STDERR_TAIL:]})
 
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
@@ -334,7 +360,9 @@ class SshDriver:
         else:
             remote = shlex.join([
                 "sbatch", "--parsable", f"--time={_hms(wall)}", f"--cpus-per-task={cpus}", f"--mem={mem_gb}G",
-                f"--chdir={work}", f"--output={work}/job.log", script_path,
+                f"--chdir={work}", f"--output={work}/job.log",
+                *([f"--partition={self.site.partition}"] if self.site.partition else []),
+                script_path,
             ])
             step_started = time.monotonic()
             submitted = self._ssh(remote)
@@ -364,16 +392,28 @@ class SshDriver:
         outputs: dict[str, Path] = {}
         for output in _fetched_outputs(job):
             local = fetch_to / output["name"]
-            argv = ["scp", "-o", "BatchMode=yes", f"{self.site.host}:{output['path']}", str(local)]
             step_started = time.monotonic()
-            try:
-                copied = self.runner(argv, capture_output=True, text=True, timeout=max(wall, 600), check=False)
-            except (OSError, subprocess.TimeoutExpired) as error:
-                raise _job_error(f"could not fetch {output['name']}: {error}", log) from error
+            if self.site.submit_host:
+                # Stream the file back through both hops; no assumption that the gateway sees the login node's files.
+                argv = ["ssh", "-o", "BatchMode=yes", str(self.site.host), self._wrap(shlex.join(["cat", output["path"]]))]
+                try:
+                    copied = self.runner(argv, capture_output=True, timeout=max(wall, 600), check=False)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise _job_error(f"could not fetch {output['name']}: {error}", log) from error
+                if copied.returncode == 0:
+                    local.write_bytes(copied.stdout or b"")
+                stderr = (copied.stderr or b"").decode("utf-8", "replace")
+            else:
+                argv = ["scp", "-o", "BatchMode=yes", f"{self.site.host}:{output['path']}", str(local)]
+                try:
+                    copied = self.runner(argv, capture_output=True, text=True, timeout=max(wall, 600), check=False)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise _job_error(f"could not fetch {output['name']}: {error}", log) from error
+                stderr = copied.stderr or ""
             log.append({"step": f"fetch:{output['name']}", "argv": argv, "returncode": copied.returncode,
-                        "seconds": round(time.monotonic() - step_started, 3), "stderr_tail": (copied.stderr or "")[-STDERR_TAIL:]})
+                        "seconds": round(time.monotonic() - step_started, 3), "stderr_tail": stderr[-STDERR_TAIL:]})
             if copied.returncode != 0 or not local.exists():
-                raise _job_error(f"could not fetch {output['name']} from {self.site.host}: {(copied.stderr or '').strip()[-300:]}", log)
+                raise _job_error(f"could not fetch {output['name']} from {self.site.host}: {stderr.strip()[-300:]}", log)
             outputs[output["name"]] = local
         cleanup = shlex.join(["rm", "-rf", work])
         self._ssh(cleanup)

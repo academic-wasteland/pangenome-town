@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -413,3 +414,68 @@ def test_allele_frequency_through_the_ssh_driver(fake_remote, towns, toy_data, t
     assert [o["name"] for o in result["outputs"]] == ["allele_frequencies.tsv"] and result["variant_count"] == 3
     assert not list(out.rglob("genotypes.tsv")) and not (out / "fetched").exists()
     assert list(fake_remote["remote"].iterdir()) == []
+
+
+def test_ssh_driver_hops_to_a_submit_host(fake_remote, tmp_path):
+    work = str(fake_remote["remote"] / "job-3")
+    site = Site("ddbj-test", "ssh", host="gw-test", submit_host="a001", partition="epyc", workdir=str(fake_remote["remote"]), scheduler="slurm")
+    driver = SshDriver(site, poll_seconds=0)
+    result = driver.run(_echo_job(work), fetch_to=tmp_path / "fetched")
+    assert result.outputs["out file.txt"].read_text(encoding="utf-8") == "hello world; not a command\n"
+    log = fake_remote["log"].read_text(encoding="utf-8")
+    assert "ssh gw-test ssh -o BatchMode=yes a001" in log and "\nssh a001 " in "\n" + log
+    assert "--partition=epyc" in log and "sacct -j 4242" in log
+    assert "scp " not in log and f"cat {shlex.quote(work + '/out file.txt')}" in log
+    assert all(item["argv"][3] == "gw-test" and item["argv"][4].startswith("ssh -o BatchMode=yes a001 ") for item in result.log if item["argv"][0] == "ssh")
+    assert not Path(work).exists()
+
+
+def test_submit_host_config_is_validated(towns):
+    from pangenome_town import config
+
+    town = towns["yamatai"]
+    path = town.city_root / "town.toml"
+    base = path.read_text()
+    path.write_text(base + '\n[[sites]]\nname = "ddbj"\ndriver = "ssh"\nhost = "ddbj"\nsubmit_host = "a001"\npartition = "epyc"\nworkdir = "/home/x/wasteland"\nscheduler = "slurm"\n', encoding="utf-8")
+    site = load_sites(config.load(path))[0]
+    assert (site.submit_host, site.partition) == ("a001", "epyc")
+    for bad in ('submit_host = "a001; rm -rf /"', 'partition = "epyc --wrap=id"'):
+        path.write_text(base + f'\n[[sites]]\nname = "ddbj"\ndriver = "ssh"\nhost = "ddbj"\n{bad}\nworkdir = "/home/x/wasteland"\n', encoding="utf-8")
+        with pytest.raises(ComputeError):
+            load_sites(config.load(path))
+    path.write_text(base + '\n[[sites]]\nname = "box"\ndriver = "local"\nsubmit_host = "a001"\n', encoding="utf-8")
+    with pytest.raises(ComputeError, match="submit_host needs the ssh driver"):
+        load_sites(config.load(path))
+
+
+def test_reachable_checks_the_submit_host_through_the_gateway():
+    from pangenome_town.compute.sites import clear_reachability_cache
+
+    clear_reachability_cache()
+    seen = []
+
+    def runner(argv, **kwargs):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    site = Site("ddbj", "ssh", host="ddbj", submit_host="a001", workdir="/home/x", scheduler="slurm")
+    ok, detail = reachable(site, runner=runner, cache_seconds=0)
+    assert ok and "ddbj then a001" in detail
+    assert seen[0][-2] == "ddbj" and seen[0][-1] == "ssh -o BatchMode=yes -o ConnectTimeout=10 a001 true"
+
+
+@needs_bcftools
+def test_remote_allele_frequency_keeps_genotypes_on_the_site(fake_remote, towns, toy_data, tmp_path):
+    town = towns["ubar"]
+    remote_site = Site("ddbj-test", "ssh", host="gw-test", submit_host="a001", workdir=str(fake_remote["remote"]), scheduler="slurm",
+                       datasets=("vcf",), paths={"vcf": str(toy_data["vcf"])}, tools=("bcftools",))
+    local_site = Site("box", "local", datasets=("vcf",), paths={"vcf": str(toy_data["vcf"])}, tools=("bcftools",))
+    remote = run_task(town, template_name="allele-frequency", region=REGION, out_dir=tmp_path / "remote", site=remote_site,
+                      driver=SshDriver(remote_site, poll_seconds=0))
+    local = run_task(town, template_name="allele-frequency", region=REGION, out_dir=tmp_path / "local", site=local_site)
+    assert Path(remote["outputs"][0]["path"]).read_text(encoding="utf-8") == Path(local["outputs"][0]["path"]).read_text(encoding="utf-8")
+    assert remote["variant_count"] == local["variant_count"] and remote["mean_alt_frequency"] == local["mean_alt_frequency"]
+    assert [step["step"] for step in remote["provenance"]["commands"] if step["step"].startswith("fetch:")] == ["fetch:allele_frequencies.tsv"]
+    script = Path(f"{fake_remote['log']}.jobsh").read_text(encoding="utf-8")
+    assert "awk -F" in script and "rm -f" in script and "genotypes.tsv" in script
+    assert not list(tmp_path.rglob("genotypes.tsv"))

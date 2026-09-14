@@ -165,8 +165,8 @@ pangenome-town compute sites                      # reachability and which templ
 pangenome-town compute plan allele-frequency --region GRCh38:chr6:29940000-29990000
 ```
 
-DDBJ is Yamatai's compute cluster: only Yamatai declares it, as a Slurm site that stays disabled until it points
-at an NIG interactive node (the `gw` gateway has no Slurm configuration).
+DDBJ is Yamatai's compute cluster: only Yamatai declares it, as a Slurm site whose `submit_host` (`a001`) sits behind
+the `gw` gateway; every remote step runs as `ssh ddbj ssh a001 ...` and outputs stream back through both hops.
 Not yet done: requester-held compute allocations, issuance as RCP contributions, content
 inspection of released outputs, and a workstation envelope large enough for whole-contig `vg deconstruct`
 (it needs about 48 GB and up to two hours on JaSaPaGe, so the default limits refuse it).

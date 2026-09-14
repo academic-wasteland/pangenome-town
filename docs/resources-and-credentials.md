@@ -91,12 +91,13 @@ max_mem_gb = 32
 max_wall_seconds = 1800
 
 [[sites]]
-name = "ddbj"
+name = "ddbj"                    # declared by Yamatai only: DDBJ is Yamatai's cluster
 driver = "ssh"
-host = "ddbj"                    # ~/.ssh/config alias; the key never leaves the agent/keyring
-workdir = "/home/asianhla/wasteland/ubar"
-scheduler = "none"               # or "slurm"
-enabled = false                  # capability not yet granted for automated use
+host = "ddbj"                    # ~/.ssh/config alias for the gateway; the key never leaves the agent/keyring
+submit_host = "a001"             # login node behind the gateway that runs sbatch
+workdir = "/home/leechuck/wasteland/yamatai"
+scheduler = "slurm"
+enabled = true
 datasets = ["graph", "vcf"]
 paths = { graph = "/home/asianhla/data/JaSaPaGe/JaSaPaGe.gbz", vcf = "/home/asianhla/data/JaSaPaGe/JaSaPaGe.GRCh38.vcf.gz" }
 ```
@@ -316,10 +317,11 @@ an expired credential, and a revoked credential each fail verification with a sp
 
 ## 5. Out of scope for the minimal example
 
-- DDBJ belongs to Yamatai (decision 2026-09-14): only Yamatai declares the `ddbj` site (Slurm). It stays disabled
-  until it points at an NIG interactive node, because the `gw` gateway reached by the `ddbj` alias has no Slurm
-  configuration. Ubar has no DDBJ capability and refers such work to Yamatai. Ibex needs a service account; a shared
-  personal key likely violates KAUST HPC policy.
+- DDBJ belongs to Yamatai (decision 2026-09-14): only Yamatai declares the `ddbj` site. Jobs cannot be submitted
+  from the `gw` gateway (no Slurm configuration there), so the site sets `submit_host = "a001"` and every step runs
+  as `ssh ddbj ssh a001 <command>`, using the gateway's trusted host keys; outputs are streamed back with `cat`.
+  Ubar has no DDBJ capability and refers such work to Yamatai. Ibex needs a service account; a shared personal key
+  likely violates KAUST HPC policy.
 - `ComputeAllocation` credentials (a requester-held compute budget issued by a site operator).
 - Issuance as RCP contributions (the registrar speaks plain JSON over HTTP for now).
 - W3C Data Integrity conformance, DIDs, OIDC4VP, status lists with privacy.

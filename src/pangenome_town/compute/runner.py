@@ -8,6 +8,7 @@ the same validator. Only outputs the template marks `release = true` leave the w
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import time
@@ -19,10 +20,40 @@ from ..config import TownConfig
 from ..exchange import sha256_file
 from ..tools.graph import Call, Region, _version
 from . import ComputeError
-from .sites import Site, driver_for, load_sites, reachable
+from .sites import RenderedJob, Site, Step, driver_for, load_sites, reachable
 from .workflows import TEMPLATES, plan, render, validate
 
 AGGREGATE_HEADER = "CHROM\tPOS\tREF\tALT\tallele_count\tallele_number\talt_frequency\n"
+# The same aggregation as `aggregate_genotypes`, run on a remote site so individual genotypes never leave it.
+AWK_AGGREGATE = (
+    'BEGIN{print "CHROM\tPOS\tREF\tALT\tallele_count\tallele_number\talt_frequency"} '
+    '/^#/{next} NF>=4{n=0;c=0;for(i=5;i<=NF;i++){k=split($i,a,/[\\/|]/);for(j=1;j<=k;j++){if(a[j]!="."&&a[j]!=""){n++;if(a[j]+0>0)c++}}} '
+    'print $1,$2,$3,$4,c,n,(n?sprintf("%.6f",c/n):"NA")}'
+)
+
+
+def aggregate_on_site(job: RenderedJob) -> RenderedJob:
+    """Append site-side aggregation and deletion of the genotype table; only the aggregate table is fetched."""
+    work = job.work_dir
+    steps = [*job.steps,
+             Step(id="aggregate", argv=["awk", "-F", "\t", "-v", "OFS=\t", AWK_AGGREGATE, f"{work}/genotypes.tsv"], stdout=f"{work}/allele_frequencies.tsv"),
+             Step(id="drop-genotypes", argv=["rm", "-f", f"{work}/genotypes.tsv"], stdout=None)]
+    outputs = []
+    for output in job.outputs:
+        if output["name"] == "genotypes.tsv":
+            outputs.append({**output, "stage": "site"})
+        elif output.get("stage") == "postprocess":
+            outputs.append({**output, "stage": "job"})
+        else:
+            outputs.append(output)
+    return dataclasses.replace(job, steps=steps, outputs=outputs)
+
+
+def summarize_aggregate(table: Path, sample_count: int) -> dict[str, Any]:
+    rows = [line.split("\t") for line in table.read_text(encoding="utf-8").splitlines()[1:] if line.strip()]
+    frequencies = [float(row[6]) for row in rows if len(row) > 6 and row[6] != "NA"]
+    return {"variant_count": len(rows), "sample_count": sample_count,
+            "mean_alt_frequency": round(sum(frequencies) / len(frequencies), 6) if frequencies else None}
 
 
 def pick_site(town: TownConfig, template_name: str) -> tuple[Site | None, list[dict[str, Any]]]:
@@ -85,13 +116,18 @@ def run_task(
         work_dir = f"{str(site.workdir).rstrip('/')}/{uuid.uuid4().hex}"
         fetch_to = out_dir / "fetched"
     job = render(spec, site, work_dir=work_dir, samples=samples, reference_path_template=town.reference_path_template)
+    remote_aggregate = site.driver != "local" and template.postprocess == "aggregate_genotypes"
+    if remote_aggregate:
+        job = aggregate_on_site(job)
     driver = driver or driver_for(site)
     started = time.time()
     try:
         result = driver.run(job, fetch_to=fetch_to)
         local: dict[str, Path] = dict(result.outputs)
         summary: dict[str, Any] = {}
-        if template.postprocess == "aggregate_genotypes":
+        if remote_aggregate:
+            summary = summarize_aggregate(local["allele_frequencies.tsv"], len(samples))
+        elif template.postprocess == "aggregate_genotypes":
             aggregate = fetch_to / "allele_frequencies.tsv"
             summary = aggregate_genotypes(local["genotypes.tsv"], aggregate)
             local["allele_frequencies.tsv"] = aggregate
