@@ -1,0 +1,8 @@
+[order]
+description = "Dispatch each pending peer question to the townsfolk agent as an answer-peer workflow"
+trigger = "condition"
+check = "pangenome-town inbox --check"
+check_timeout = "20s"
+exec = "$ORDER_DIR/scripts/inbox-dispatch.sh"
+timeout = "2m"
+scope = "city"

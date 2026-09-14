@@ -1,0 +1,2 @@
+description = "vg and bcftools are available for pangenome queries"
+warmup = true

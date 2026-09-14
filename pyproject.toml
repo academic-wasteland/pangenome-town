@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pangenome-town"
+version = "0.1.0"
+description = "Gas City pack and tooling for a lab-hosted pangenome town in The Academic Wasteland"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9", "ruff>=0.6"]
+
+[project.scripts]
+pangenome-town = "pangenome_town.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pangenome_town"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"

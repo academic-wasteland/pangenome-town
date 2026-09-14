@@ -1,0 +1,2 @@
+description = "OPENROUTER_API_KEY is present so agents never fall back to another provider"
+warmup = true

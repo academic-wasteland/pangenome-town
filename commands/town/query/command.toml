@@ -1,0 +1,1 @@
+description = "Run a deterministic pangenome query: gc town query --kind <kind> [--region <region>]"

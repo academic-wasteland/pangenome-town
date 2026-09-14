@@ -1,0 +1,23 @@
+[pack]
+name = "academic-wasteland/pangenome-town"
+schema = 2
+version = "0.1.0"
+description = "A lab-hosted pangenome town: holds one population pangenome, answers peer towns, joins The Academic Wasteland."
+
+[[pack.requires]]
+scope = "rig"
+agent = "townsfolk"
+
+[[service]]
+name = "envoy"
+kind = "proxy_process"
+publish_mode = "private"
+state_root = ".gc/services/envoy"
+
+[service.process]
+command = ["scripts/run-envoy.sh"]
+health_path = "/healthz"
+
+[service.publication]
+visibility = "private"
+hostname = "envoy"

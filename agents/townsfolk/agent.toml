@@ -1,0 +1,6 @@
+scope = "rig"
+description = "Resident of a pangenome town: answers peer questions about the population pangenome using deterministic query tools."
+work_dir = "{{.RigRoot}}"
+idle_timeout = "20m"
+max_active_sessions = 1
+nudge = "Run `gc mail check` and `pangenome-town inbox`. For every pending peer question follow the answer procedure in your instructions. Then run `gc hook --claim --drain-ack --json` and do any work it returns."
