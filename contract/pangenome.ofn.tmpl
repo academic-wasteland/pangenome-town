@@ -95,7 +95,8 @@ Ontology(<{{TOWN_IRI}}contract/ontology>
  DisjointClasses(pg:ReputableRequester pg:UnvettedRequester pg:BlockedRequester)
 
  ClassAssertion(pg:PangenomeGraph town:graphs/{{GRAPH_ID}})
- EquivalentClasses(town:ServedGraph ObjectOneOf(town:graphs/{{GRAPH_ID}}))
+ SubClassOf(town:ServedGraph pg:PangenomeGraph)
+ ClassAssertion(town:ServedGraph town:graphs/{{GRAPH_ID}})
 
  EquivalentClasses(town:AcceptedBasicTask ObjectIntersectionOf(pg:BasicQueryTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy :Actor)))
  EquivalentClasses(town:AcceptedLargeTask ObjectIntersectionOf(pg:LargeAnalysisTask ObjectSomeValuesFrom(:usesDataset town:ServedGraph) ObjectSomeValuesFrom(:requestedBy pg:ReputableRequester)))

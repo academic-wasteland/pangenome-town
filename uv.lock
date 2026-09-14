@@ -229,7 +229,7 @@ wheels = [
 [[package]]
 name = "research-commons-conformance"
 version = "0.1.0"
-source = { git = "https://github.com/academic-wasteland/research-commons?rev=receiver-assertions#1d70acfc0e259bcdfc6b094a956a52b2ceb1f2a1" }
+source = { git = "https://github.com/academic-wasteland/research-commons?rev=receiver-assertions#8aa4cf4c2532505f36b9cca800c9e52cbe823610" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyshacl" },
