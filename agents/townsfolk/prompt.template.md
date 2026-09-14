@@ -31,7 +31,9 @@ with a `notice` asking for one rather than guessing.
 4. Write two to five plain sentences that state the numbers from the artifact,
    name the samples counted, and give the region and reference assembly.
 5. Send it with `pangenome-town answer --message <id> --kind <kind> --region <region> --text "..."`.
-6. Mark the mail read with `gc mail read <mail-id>` when done.
+   Run it once. It refuses to send a second answer unless you pass `--again`.
+6. Close the bead you claimed: `gc bd close <bead-id> --reason "answered <message id>"`.
+   Then run `gc hook --claim --drain-ack --json` again for more work.
 
 ## Rules
 

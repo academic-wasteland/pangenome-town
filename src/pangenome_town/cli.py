@@ -49,6 +49,7 @@ def parser() -> argparse.ArgumentParser:
     answer.add_argument("--text", required=True, help="the narrative answer to send")
     answer.add_argument("--out", type=Path)
     answer.add_argument("--dry-run", action="store_true")
+    answer.add_argument("--again", action="store_true", help="send even if an answer to this message was already sent")
 
     inbox = commands.add_parser("inbox", help="list questions received but not yet answered or dispatched")
     inbox.add_argument("--check", action="store_true", help="exit 0 only when pending questions exist")
@@ -65,6 +66,11 @@ def parser() -> argparse.ArgumentParser:
     peer.add_argument("peer")
 
     commands.add_parser("doctor", help="check tools, data, and exchange log")
+
+    dashboard = commands.add_parser("dashboard", help="serve the operator dashboard on loopback")
+    dashboard.add_argument("--towns", nargs="+", type=Path, help="town.toml files to watch (default: --town or $PT_TOWNS)")
+    dashboard.add_argument("--port", type=int, default=8390)
+    dashboard.add_argument("--bind", default="127.0.0.1")
     return root
 
 
@@ -82,6 +88,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(arguments: argparse.Namespace) -> int:
+    if arguments.command == "dashboard":
+        from . import dashboard
+
+        paths = arguments.towns or [Path(item) for item in os.environ.get("PT_TOWNS", "").split(":") if item]
+        towns = [config.load(path) for path in paths] if paths else [_town(arguments)]
+        dashboard.serve(towns, bind=arguments.bind, port=arguments.port)
+        return 0
     town = _town(arguments)
     if arguments.command == "envoy":
         socket_path = arguments.socket or os.environ.get("GC_SERVICE_SOCKET")
@@ -122,6 +135,11 @@ def _dispatch(arguments: argparse.Namespace) -> int:
             raise EnvelopeError(f"unknown message {arguments.message}")
         if question.recipient != town.name:
             raise EnvelopeError("that message was not addressed to this town")
+        existing = log.answers(question.id)
+        if existing and not arguments.again:
+            _print({"already_answered": True, "answer_id": existing[0]["id"], "in_reply_to": question.id,
+                    "hint": "the answer was already sent; pass --again only if you must send another"})
+            return 0
         region_text = arguments.region or question.body.get("region")
         region = graph.Region.parse(str(region_text), town.default_assembly) if region_text else None
         out_dir = arguments.out or graph.default_out_dir(town, f"answer_{arguments.kind}_{region or 'graph'}")

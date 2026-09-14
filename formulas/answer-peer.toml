@@ -29,7 +29,8 @@ A peer town asked a question. Answer it from a query artifact, never from memory
 Procedure:
 1. `pangenome-town messages --id {{message_id}}`
 2. `pangenome-town query --kind <kind> --region <region>` and read the JSON.
-3. `pangenome-town answer --message {{message_id}} --kind <kind> --region <region> --text "<two to five sentences with the numbers>"`
+3. `pangenome-town answer --message {{message_id}} --kind <kind> --region <region> --text "<two to five sentences with the numbers>"` (once)
+4. Close this bead: `gc bd close <this bead id> --reason "answered {{message_id}}"`
 
 If the question names no region and the query needs one, send
 `pangenome-town send --to {{peer}} --kind notice --reply-to {{message_id}} --text "Please name a region as assembly:chrom:start-end."`

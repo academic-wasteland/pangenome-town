@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Academic Wasteland towns</title>
+<style>
+:root{--bg:#f6f4ee;--fg:#1d1c19;--muted:#6d6a60;--line:#d9d4c7;--card:#fffdf8;--accent:#8a5a19;--ok:#2f7d4a;--warn:#b7791f;--bad:#b3261e;--lane-a:#e9eef7;--lane-b:#f3ebe0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#ecebe6;--muted:#9a978f;--line:#33363d;--card:#1d1f25;--accent:#d9a75b;--ok:#6ccb8a;--warn:#e2b45a;--bad:#f28b82;--lane-a:#1f2634;--lane-b:#2c241a}}
+:root[data-theme="dark"]{--bg:#15161a;--fg:#ecebe6;--muted:#9a978f;--line:#33363d;--card:#1d1f25;--accent:#d9a75b;--ok:#6ccb8a;--warn:#e2b45a;--bad:#f28b82;--lane-a:#1f2634;--lane-b:#2c241a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;padding-inline:16px;padding-block:12px 40px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px}
+h1{font-size:18px;margin:0;font-weight:600}h2{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.muted{color:var(--muted)}.mono{font-family:var(--mono);font-size:12px}
+.towns{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 8px;font-size:12px;margin:2px 2px 0 0;background:var(--bg)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.lanes{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start}
+.lanes .hdr{font-weight:600;padding:4px 8px;border-radius:6px}
+.lane-a .hdr{background:var(--lane-a)}.lane-b .hdr{background:var(--lane-b)}
+.msg{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;cursor:pointer}
+.msg:hover{border-color:var(--accent)}.msg.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.msg .k{font-size:12px;color:var(--muted)}.msg .t{margin-top:4px}
+.status{font-size:12px;font-weight:600}
+#detail{margin-top:16px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;max-height:360px;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top}
+.tl li{margin:2px 0}.act{border-left:3px solid var(--line);padding-left:8px;margin:6px 0}
+.act.tool{border-color:var(--accent)}.act.text{border-color:var(--ok)}
+details summary{cursor:pointer;color:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:16px}.row>div{flex:1 1 320px;min-width:0}
+a{color:var(--accent)}
+@media (max-width:700px){.lanes{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>The Academic Wasteland: towns</h1>
+  <span class="muted" id="clock"></span>
+  <span class="muted">live <span id="live" class="warn">connecting</span></span>
+  <a href="http://127.0.0.1:8372/" target="_blank" rel="noopener">gc dashboard</a>
+</header>
+
+<section>
+  <h2>Towns</h2>
+  <div class="towns" id="towns"></div>
+</section>
+
+<section>
+  <h2>Exchanges <span class="muted" id="xcount"></span></h2>
+  <div class="lanes" id="lanes"></div>
+</section>
+
+<section id="detail" hidden>
+  <h2>Exchange detail</h2>
+  <div id="detail-body"></div>
+</section>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtTs = (t) => { if (!t) return ""; const d = typeof t === "number" ? new Date(t*1000) : new Date(t); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}); };
+let towns = [], laneOrder = [], selected = null, lastSeq = 0;
+
+function statusClass(s){ return {answered:"ok",delivered:"ok",sent:"ok",received:"warn",dispatched:"warn",sending:"warn",failed:"bad",delivery_failed:"bad"}[s] || "muted"; }
+
+async function loadTowns(){
+  const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = towns.map(t => t.name);
+  $("#towns").innerHTML = towns.map(t => `
+    <div class="card">
+      <div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.name)} · ${esc(t.population)}</span></div>
+      <div style="margin-top:4px">
+        <span class="chip ${t.city_running?"ok":"bad"}">city ${t.city_running?"running":"down"}</span>
+        <span class="chip ${t.envoy_ok?"ok":"bad"}">envoy ${t.envoy_ok?"ok":"down"}</span>
+        <span class="chip ${t.graph_present?"ok":"warn"}">graph ${t.graph_present?"present":"missing"}</span>
+        <span class="chip ${t.vcf_present?"ok":"warn"}">vcf ${t.vcf_present?"present":"missing"}</span>
+      </div>
+      <div class="muted" style="margin-top:6px">${t.samples.length} samples served · peers: ${t.peers.map(esc).join(", ") || "none"}</div>
+      ${t.graph_summary && t.graph_summary.paths_total ? `<div class="muted">graph: ${Object.entries(t.graph_summary.graph||{}).map(([k,v])=>k+" "+v.toLocaleString()).join(", ")}; ${t.graph_summary.paths_total.toLocaleString()} paths</div>` : ""}
+      <div style="margin-top:6px">${t.sessions.length ? t.sessions.map(s => `<span class="chip">${esc(s.template.split("/").pop())} · ${esc(s.state)}</span>`).join("") : '<span class="muted">no sessions</span>'}</div>
+      <div class="muted" style="margin-top:6px">agent spend: ${t.costs.available ? `$${t.costs.usd} · ${t.costs.assistant_turns} turns · ${(t.costs.tokens.input+t.costs.tokens.output).toLocaleString()} tokens` : "n/a"}</div>
+    </div>`).join("");
+}
+
+async function loadExchanges(){
+  const r = await fetch("/api/exchanges?limit=200"); const j = await r.json();
+  const xs = j.exchanges; $("#xcount").textContent = `(${xs.length})`;
+  const lanes = laneOrder.length ? laneOrder : [...new Set(xs.flatMap(x => [x.from, x.to]))];
+  const html = lanes.map((name, i) => {
+    const mine = xs.filter(x => x.from === name);
+    return `<div class="lane-${i%2?"b":"a"}"><div class="hdr">${esc(name)} <span class="muted">sent ${mine.length}</span></div>` +
+      mine.map(x => `<div class="msg ${selected===x.id?"sel":""}" data-id="${esc(x.id)}">
+        <div class="k">${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
+        <div class="t">${esc((x.envelope.body.text||"").slice(0,220))}</div>
+        ${x.envelope.body.region?`<div class="mono muted">${esc(x.envelope.body.region)}</div>`:""}
+      </div>`).join("") + `</div>`;
+  }).join("");
+  $("#lanes").innerHTML = html;
+  document.querySelectorAll(".msg").forEach(el => el.addEventListener("click", () => select(el.dataset.id)));
+}
+
+async function select(id){
+  selected = id; document.querySelectorAll(".msg").forEach(el => el.classList.toggle("sel", el.dataset.id === id));
+  const r = await fetch("/api/exchanges/" + encodeURIComponent(id)); if (!r.ok) return;
+  const x = await r.json(); $("#detail").hidden = false;
+  const artifacts = (list) => list.map(a => `<details><summary>${esc(a.name)} <span class="muted mono">${esc(a.sha256.slice(0,23))}… ${a.bytes?a.bytes.toLocaleString()+" B":""}</span></summary>${renderArtifact(a)}</details>`).join("") || '<span class="muted">none</span>';
+  const activity = (x.agent_activity||[]).map(a => a.type === "tool"
+      ? `<div class="act tool"><div class="k muted">${fmtTs(a.ts)} · tool <strong>${esc(a.tool)}</strong> · ${esc(a.status||"")}</div><pre>${esc(a.input && a.input.command ? a.input.command : JSON.stringify(a.input||{}, null, 1))}</pre>${a.output?`<details><summary>output</summary><pre>${esc(a.output)}</pre></details>`:""}</div>`
+      : a.type === "text" ? `<div class="act text"><div class="k muted">${fmtTs(a.ts)} · agent</div><div>${esc(a.text)}</div></div>`
+      : `<div class="act"><span class="muted">${fmtTs(a.ts)} · step finished · ${a.tokens?`${a.tokens.input}+${a.tokens.output} tokens (${a.tokens.reasoning} reasoning)`:""} ${a.cost?`· $${a.cost.toFixed(5)}`:""}</span></div>`).join("") || '<span class="muted">no agent activity recorded for this window</span>';
+  $("#detail-body").innerHTML = `
+    <div class="row">
+      <div>
+        <div class="card"><div class="k muted">${esc(x.kind)} · ${esc(x.from)} → ${esc(x.to)} · ${esc(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span></div>
+          <div style="margin-top:6px">${esc(x.envelope.body.text||"")}</div>
+          <div class="mono muted" style="margin-top:4px">${esc(x.id)} · ${esc(x.digest)}</div></div>
+        <h2>Timeline</h2><ul class="tl">${x.timeline.map(s => `<li><span class="mono muted">${fmtTs(s.ts)}</span> <strong>${esc(s.town)}</strong> ${esc(s.kind)} ${Object.keys(s.detail||{}).length?`<span class="muted mono">${esc(JSON.stringify(s.detail).slice(0,160))}</span>`:""}</li>`).join("")}</ul>
+        <h2>Answers</h2>${x.answers.length ? x.answers.map(a => `<div class="card"><div class="k muted">${esc(a.from)} · ${esc(a.created)} · ${esc(a.status)}</div><div style="margin-top:4px">${esc(a.envelope.body.text||"")}</div>${a.envelope.body.result?`<pre>${esc(JSON.stringify(a.envelope.body.result,null,1))}</pre>`:""}<div style="margin-top:6px">${artifacts(a.artifacts||[])}</div></div>`).join("") : '<span class="muted">no answer yet</span>'}
+        <h2>Attachments on this message</h2>${artifacts(x.artifacts||[])}
+      </div>
+      <div>
+        <h2>Agent activity in ${esc(x.to)}</h2>${activity}
+        <h2>Raw envelope</h2><pre>${esc(JSON.stringify(x.envelope,null,1))}</pre>
+      </div>
+    </div>`;
+  $("#detail").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function renderArtifact(a){
+  if (a.content && typeof a.content === "object"){
+    const c = a.content; const prov = c.provenance;
+    let head = "";
+    if (prov) head = `<div class="muted">commands: ${(prov.commands||[]).map(cmd => `<code>${esc(cmd.argv.map(x=>x.split("/").pop()).join(" ").slice(0,140))}</code> (${cmd.seconds}s)`).join("; ")} · versions: ${esc(JSON.stringify(prov.versions))}</div>`;
+    const copy = Object.assign({}, c); delete copy.provenance;
+    return head + `<pre>${esc(JSON.stringify(copy,null,1))}</pre>`;
+  }
+  if (a.text){
+    const rows = a.text.split("\n").filter(Boolean).slice(0,60).map(l => l.split("\t"));
+    if (rows.length > 1 && rows[0].length > 2) return `<div style="overflow:auto"><table>${rows.map((r,i)=>`<tr>${r.map(c=>`<${i?"td":"th"}>${esc(c)}</${i?"td":"th"}>`).join("")}</tr>`).join("")}</table></div>`;
+    return `<pre>${esc(a.text)}</pre>`;
+  }
+  return `<span class="muted">${esc(a.path||"not readable here")}</span>`;
+}
+
+function connect(){
+  const es = new EventSource("/api/events/stream?after=" + lastSeq);
+  es.onopen = () => { $("#live").textContent = "on"; $("#live").className = "ok"; };
+  es.onerror = () => { $("#live").textContent = "reconnecting"; $("#live").className = "warn"; };
+  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); });
+}
+setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
+setInterval(loadTowns, 30000);
+loadTowns().then(loadExchanges).then(connect);
+</script>
+</body>
+</html>
