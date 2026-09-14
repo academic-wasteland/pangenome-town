@@ -13,6 +13,13 @@ from . import config, envoy, mail, peers
 from .exchange import Attachment, Envelope, EnvelopeError, ExchangeLog, sha256_file
 from .tools import graph
 
+TASK_CLASSES = {
+    "summary": "GraphSummaryTask", "subgraph": "RegionExtractionTask", "haplotypes": "HaplotypePresenceTask",
+    "variants": "RegionVariantListingTask", "deconstruct": "WholeGraphDeconstructTask", "compare": "PopulationComparisonTask",
+    "allele-frequency": "AlleleFrequencyTask", "genotype-export": "IndividualGenotypeExportTask",
+}
+CONTROLLED_KIND_NAMES = {"allele-frequency", "genotype-export"}
+
 
 def _print(value: Any) -> None:
     json.dump(value, sys.stdout, indent=2, sort_keys=True, ensure_ascii=False)
@@ -73,15 +80,22 @@ def parser() -> argparse.ArgumentParser:
     rcp_commands.add_parser("agent-card", help="print this town's A2A Agent Card")
     task = rcp_commands.add_parser("task", help="author a ResearchTask addressed to a peer town (prints JSON-LD)")
     task.add_argument("--to", required=True, help="peer town name")
-    task.add_argument("--kind", required=True, choices=["summary", "subgraph", "haplotypes", "variants", "deconstruct", "compare"])
+    task.add_argument("--kind", required=True, choices=list(TASK_CLASSES))
     task.add_argument("--region")
     task.add_argument("--on-behalf-of", help="principal IRI (ORCID, hop:// rig URI)")
+    task.add_argument("--dataset", action="append", default=[], help="controlled dataset IRI (default for controlled kinds: the peer's restricted datasets)")
     submit = rcp_commands.add_parser("submit", help="send a ResearchTask to a peer town over A2A and print the task result")
     submit.add_argument("--to", required=True)
-    submit.add_argument("--kind", required=True, choices=["summary", "subgraph", "haplotypes", "variants", "deconstruct", "compare"])
+    submit.add_argument("--kind", required=True, choices=list(TASK_CLASSES))
     submit.add_argument("--region")
     submit.add_argument("--on-behalf-of")
     submit.add_argument("--task-file", type=Path, help="send this JSON-LD task instead of authoring one")
+    submit.add_argument("--dataset", action="append", default=[], help="controlled dataset IRI (default for controlled kinds: the peer's restricted datasets)")
+    submit.add_argument("--holder", help="present credentials held by this IRI (usually the same as --on-behalf-of)")
+    submit.add_argument("--holder-slug", help="holder wallet name under ~/.gc/holders (default: derived from --holder)")
+    submit.add_argument("--credential", action="append", default=[], type=Path, help="credential file to present (default: the whole wallet)")
+    submit.add_argument("--registrar", help="registrar URL to fetch accreditations from (default: [trust].registrar)")
+    submit.add_argument("--follow-referrals", action="store_true", help="resubmit once to a town the refusal refers to")
     get = rcp_commands.add_parser("get", help="fetch a task from a peer town (tasks/get)")
     get.add_argument("--to", required=True)
     get.add_argument("task_id")
@@ -101,6 +115,77 @@ def parser() -> argparse.ArgumentParser:
     stamp.add_argument("--completion", required=True, help="completion id (c-...)")
     stamp.add_argument("--report", required=True, type=Path, help="semantic validation report JSON")
 
+    authority = commands.add_parser("authority", help="Camelot: issuers, applications, human decisions, registrar service")
+    authority.add_argument("--registry", help="registry directory (default: [authority].registry under the city)")
+    authority.add_argument("--key-dir", help="issuer private keys (default: [authority].key_dir or ~/.gc/authority/<town>)")
+    authority_commands = authority.add_subparsers(dest="authority_command", required=True)
+    init_issuer = authority_commands.add_parser("init-issuer", help="create an issuer and its key (idempotent)")
+    init_issuer.add_argument("slug")
+    init_issuer.add_argument("--name", required=True)
+    init_issuer.add_argument("--role", required=True, help="e.g. AccreditationCouncil, EthicsBoard, DataAccessCommittee")
+    accredit = authority_commands.add_parser("accredit", help="an issuer accredits another issuer")
+    accredit.add_argument("--by", required=True)
+    accredit.add_argument("--subject", required=True)
+    accredit.add_argument("--roles", nargs="+", required=True)
+    accredit.add_argument("--valid-days", type=int, default=365)
+    authority_commands.add_parser("issuers", help="list issuers with keys and accreditations")
+    applications = authority_commands.add_parser("applications", help="list applications")
+    applications.add_argument("--state", choices=["pending", "approved", "denied"])
+    applications.add_argument("--check", action="store_true", help="exit 0 only when matching applications exist")
+    show = authority_commands.add_parser("show", help="one application (app-...) or credential")
+    show.add_argument("id")
+    approve = authority_commands.add_parser("approve", help="HUMAN DECISION: issue the credential an application asks for")
+    approve.add_argument("application")
+    approve.add_argument("--valid-days", type=int, default=30)
+    approve.add_argument("--decided-by", help="IRI of the deciding human (default: [authority].operator)")
+    deny = authority_commands.add_parser("deny", help="HUMAN DECISION: deny an application")
+    deny.add_argument("application")
+    deny.add_argument("--reason", required=True)
+    deny.add_argument("--decided-by")
+    revoke = authority_commands.add_parser("revoke", help="HUMAN DECISION: revoke a credential")
+    revoke.add_argument("credential")
+    notify = authority_commands.add_parser("notify", help="mail the human operator about new pending applications")
+    notify.add_argument("--dry-run", action="store_true")
+    authority_commands.add_parser("agent-card", help="print Camelot's Agent Card")
+    serve_authority = authority_commands.add_parser("serve", help="serve the registrar and Agent Card on a unix socket")
+    serve_authority.add_argument("--socket")
+
+    holder = commands.add_parser("holder", help="researcher keys and credential wallet")
+    holder_commands = holder.add_subparsers(dest="holder_command", required=True)
+    for name, help_text in (("new", "create a holder key"), ("wallet", "list stored credentials"), ("apply", "apply to Camelot for a credential"),
+                            ("fetch", "store an approved credential in the wallet")):
+        sub = holder_commands.add_parser(name, help=help_text)
+        sub.add_argument("--holder", required=True, help="holder IRI, e.g. an ORCID")
+        sub.add_argument("--slug")
+        if name in {"apply", "fetch"}:
+            sub.add_argument("--registrar", help="registrar URL (default: [trust].registrar)")
+        if name == "apply":
+            sub.add_argument("--type", required=True, choices=["DataAccessAuthorization", "EthicsApproval"])
+            sub.add_argument("--issuer", required=True, help="issuer slug, e.g. ubar-dac")
+            sub.add_argument("--scope", required=True, help="scope class IRI from the town's scope library")
+            sub.add_argument("--dataset")
+            sub.add_argument("--protocol")
+            sub.add_argument("--purpose", required=True)
+            sub.add_argument("--dry-run", action="store_true")
+        if name == "fetch":
+            sub.add_argument("application")
+
+    compute = commands.add_parser("compute", help="compute sites and workflows (the rigger's tools)")
+    compute_commands = compute.add_subparsers(dest="compute_command", required=True)
+    compute_commands.add_parser("sites", help="sites, reachability, and which templates can run where")
+    compute_plan = compute_commands.add_parser("plan", help="plan a workflow spec from a template")
+    compute_plan.add_argument("template")
+    compute_plan.add_argument("--region")
+    compute_plan.add_argument("--site")
+    compute_plan.add_argument("--threads", type=int, default=1)
+    compute_validate = compute_commands.add_parser("validate", help="validate a workflow spec against its template and site")
+    compute_validate.add_argument("spec")
+    compute_pending = compute_commands.add_parser("pending", help="admitted compute tasks waiting for the rigger")
+    compute_pending.add_argument("--check", action="store_true")
+    compute_run = compute_commands.add_parser("run", help="re-check every gate for a waiting task and run it (optionally with a proposed spec)")
+    compute_run.add_argument("--task", required=True)
+    compute_run.add_argument("--workflow", help="workflow spec JSON proposed by the rigger (validated before use)")
+
     dashboard = commands.add_parser("dashboard", help="serve the operator dashboard on loopback")
     dashboard.add_argument("--towns", nargs="+", type=Path, help="town.toml files to watch (default: --town or $PT_TOWNS)")
     dashboard.add_argument("--port", type=int, default=8390)
@@ -116,9 +201,19 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
         return _dispatch(arguments)
-    except (config.TownConfigError, EnvelopeError, graph.QueryError, mail.MailError, peers.PeerError) as error:
+    except (config.TownConfigError, EnvelopeError, graph.QueryError, mail.MailError, peers.PeerError, *_resource_errors()) as error:
         _print({"error": type(error).__name__, "detail": str(error)})
         return 2
+
+
+def _resource_errors() -> tuple[type[Exception], ...]:
+    from .authority.keys import AuthorityKeyError
+    from .authority.registrar import RegistryError
+    from .cli_resources import ResourceCommandError
+    from .compute import ComputeError
+    from .rcp.pipeline import PipelineError
+
+    return (AuthorityKeyError, RegistryError, ResourceCommandError, ComputeError, PipelineError)
 
 
 def _dispatch(arguments: argparse.Namespace) -> int:
@@ -226,6 +321,11 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         return _rcp(arguments, town, log)
     if arguments.command == "commons":
         return _commons(arguments, town, log)
+    if arguments.command in {"authority", "holder", "compute"}:
+        from . import cli_resources
+
+        handler = {"authority": cli_resources.authority_command, "compute": cli_resources.compute_command}.get(arguments.command)
+        return handler(arguments, town, log) if handler else cli_resources.holder_command(arguments, town)
 
     if arguments.command == "town-info":
         _print(envoy.EnvoyState(town, log, deliver=False).describe())
@@ -257,14 +357,10 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-TASK_CLASSES = {
-    "summary": "GraphSummaryTask", "subgraph": "RegionExtractionTask", "haplotypes": "HaplotypePresenceTask",
-    "variants": "RegionVariantListingTask", "deconstruct": "WholeGraphDeconstructTask", "compare": "PopulationComparisonTask",
-}
 
 
 def _rcp(arguments: argparse.Namespace, town: config.TownConfig, log: ExchangeLog) -> int:
-    from .rcp import PG, a2a, contract, pipeline
+    from .rcp import a2a, contract, pipeline
 
     if arguments.rcp_command == "render-contract":
         manifest = contract.render(town, town.city_root / "contract")
@@ -279,42 +375,77 @@ def _rcp(arguments: argparse.Namespace, town: config.TownConfig, log: ExchangeLo
         records = [pipeline.TaskRecord.load(d) for d in sorted(node.tasks_dir.iterdir()) if (d / "status.json").exists()]
         _print([{"id": r.id, "state": r.state, "message": r.message} for r in records])
         return 0
-    authoring = arguments.rcp_command == "task" or (arguments.rcp_command == "submit" and not arguments.task_file)
-    if authoring:
-        peer_town = config.load(_peer_town_toml(town, arguments.to))
-        region = graph.Region.parse(arguments.region, peer_town.default_assembly) if arguments.region else None
-        requester = f"https://w3id.org/academic-wasteland/{town.name}/agents/townsfolk"
-        document = pipeline.task_document(peer_town, f"{PG}{TASK_CLASSES[arguments.kind]}", requester=requester, region=region, on_behalf_of=arguments.on_behalf_of)
+    if arguments.rcp_command == "get":
+        payload = _a2a_post(town, arguments.to, {"jsonrpc": "2.0", "id": 1, "method": "tasks/get", "params": {"id": arguments.task_id}})
+        _print(payload)
+        return 0 if "result" in payload else 1
+    target = arguments.to
+    payload: dict[str, Any] = {}
+    for hop in range(2 if getattr(arguments, "follow_referrals", False) else 1):
+        document, presentation = _author_task(arguments, town, target)
         if arguments.rcp_command == "task":
-            _print(document)
+            _print(document if presentation is None else {"task": document, "presentation": presentation})
             return 0
-    elif arguments.rcp_command == "submit":
+        parts = [{"kind": "data", "data": document, "metadata": {"mediaType": a2a.TASK_PROFILE}}]
+        if presentation is not None:
+            parts.append({"kind": "data", "data": presentation, "metadata": {"mediaType": a2a.PRESENTATION_PROFILE}})
+        request = {"jsonrpc": "2.0", "id": 1, "method": "message/send",
+                   "params": {"message": {"role": "user", "messageId": document["@id"], "metadata": {"town": town.name}, "parts": parts}}}
+        payload = _a2a_post(town, target, request)
+        task_result = payload.get("result") or {}
+        state = task_result.get("status", {}).get("state")
+        refusal = (task_result.get("metadata") or {}).get("refusal") or {}
+        log.event(town.name, "rcp_submitted", document["@id"], {"to": target, "state": state, "refusal": refusal, "presented": presentation is not None})
+        if state == "completed":
+            stamped = _stamp_peer_result(town, target, task_result)
+            log.event(town.name, "rcp_stamped" if stamped.get("stamp") else "rcp_stamp_skipped", document["@id"], stamped)
+            payload["ledger"] = stamped
+        referrals = [item for item in refusal.get("referrals") or [] if item.get("town") and item["town"] != town.name]
+        if hop == 0 and state == "input-required" and referrals and getattr(arguments, "follow_referrals", False):
+            payload["referred_from"] = target
+            target = referrals[0]["town"]
+            log.event(town.name, "rcp_referral_followed", document["@id"], {"from": arguments.to, "to": target})
+            continue
+        break
+    _print(payload)
+    return 0 if "result" in payload else 1
+
+
+def _author_task(arguments: argparse.Namespace, town: config.TownConfig, target: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    from .rcp import PG, authorization, contract, pipeline
+
+    peer_town = config.load(_peer_town_toml(town, target))
+    if arguments.rcp_command == "submit" and arguments.task_file:
         from research_commons.schema import load_json
 
         document = load_json(arguments.task_file)
     else:
-        document = {"@id": arguments.task_id}
-    request = {"jsonrpc": "2.0", "id": 1, "method": "message/send" if arguments.rcp_command == "submit" else "tasks/get",
-               "params": {"message": {"role": "user", "messageId": document["@id"], "metadata": {"town": town.name},
-                                      "parts": [{"kind": "data", "data": document, "metadata": {"mediaType": a2a.TASK_PROFILE}}]}}
-               if arguments.rcp_command == "submit" else {"id": arguments.task_id}}
-    url = peers.envoy_url(town, town.peer_city(arguments.to), "/a2a")
+        region = graph.Region.parse(arguments.region, peer_town.default_assembly) if arguments.region else None
+        requester = f"https://w3id.org/academic-wasteland/{town.name}/agents/townsfolk"
+        controlled = arguments.kind in CONTROLLED_KIND_NAMES
+        dataset_iris = list(arguments.dataset) or ([item["iri"] for item in contract.restricted_datasets(peer_town)] if controlled else [])
+        names = {item["iri"]: item["name"] for item in contract.restricted_datasets(peer_town)}
+        document = pipeline.task_document(peer_town, f"{PG}{TASK_CLASSES[arguments.kind]}", requester=requester, region=region,
+                                          on_behalf_of=arguments.on_behalf_of, include_graph=not controlled,
+                                          datasets=[authorization.controlled_dataset_entity(value, names.get(value)) for value in dataset_iris])
+    presentation = None
+    if getattr(arguments, "holder", None):
+        from .cli_resources import build_presentation
+
+        registrar_url = arguments.registrar or (town.extra.get("trust") or {}).get("registrar")
+        presentation = build_presentation(peer_town, document, holder=arguments.holder, slug=arguments.holder_slug,
+                                          credential_files=list(arguments.credential), registrar_url=registrar_url)
+    return document, presentation
+
+
+def _a2a_post(town: config.TownConfig, target: str, request: dict[str, Any]) -> dict[str, Any]:
     import urllib.request
 
+    url = peers.envoy_url(town, town.peer_city(target), "/a2a")
     data = json.dumps(request).encode("utf-8")
     http_request = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json", "X-GC-Request": "pangenome-town", "X-Town": town.name})
-    with urllib.request.urlopen(http_request, timeout=600) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    if arguments.rcp_command == "submit":
-        task_result = payload.get("result") or {}
-        state = task_result.get("status", {}).get("state")
-        log.event(town.name, "rcp_submitted", document["@id"], {"to": arguments.to, "state": state, "url": url})
-        if state == "completed":
-            stamped = _stamp_peer_result(town, arguments.to, task_result)
-            log.event(town.name, "rcp_stamped" if stamped.get("stamp") else "rcp_stamp_skipped", document["@id"], stamped)
-            payload["ledger"] = stamped
-    _print(payload)
-    return 0 if "result" in payload else 1
+    with urllib.request.urlopen(http_request, timeout=900) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def _stamp_peer_result(town: config.TownConfig, peer: str, task_result: dict[str, Any]) -> dict[str, Any]:

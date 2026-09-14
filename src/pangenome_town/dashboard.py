@@ -23,6 +23,7 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from . import config
@@ -42,6 +43,7 @@ class DashboardState:
         self.supervisor_url = towns[0].supervisor_url.rstrip("/")
         self.log = ExchangeLog(towns[0].exchange_db)
         self.lock = threading.Lock()
+        self._sites_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     # Supervisor proxy -----------------------------------------------------------------
     def supervisor(self, path: str, timeout: float = 5.0) -> Any:
@@ -60,8 +62,11 @@ class DashboardState:
             sessions = self.supervisor(f"/v0/city/{name}/sessions")
             session_items = sessions.get("items") if isinstance(sessions, dict) else None
             health = self.supervisor(f"/v0/city/{name}/svc/envoy/healthz")
-            summary = _read_json(town.state_dir / "summary.json")
+            summary = _read_json(town.state_dir / "summary.json") if town.kind == "pangenome" else None
+            authority = self._authority_counts(town) if town.kind == "authority" else None
             result.append({
+                "kind": town.kind,
+                "authority": authority,
                 "name": name,
                 "display": town.display,
                 "population": town.population,
@@ -142,6 +147,74 @@ class DashboardState:
         for row in completions:
             row["evidence"] = None
         return {"available": True, "commons": str(ledger.directory), "leaderboard": board, "stamps": stamps, "wanted": wanted, "completions": completions}
+
+    # Authority towns and compute sites ---------------------------------------------------
+    def _registry(self, town: config.TownConfig) -> Any:
+        from .cli_resources import registry_for
+
+        return registry_for(town, SimpleNamespace(registry=None, key_dir=None))
+
+    def _authority_counts(self, town: config.TownConfig) -> dict[str, Any]:
+        try:
+            registry = self._registry(town)
+            return {"issuers": len(registry.issuers()), "pending_applications": len(registry.applications("pending"))}
+        except Exception as error:  # noqa: BLE001
+            return {"error": f"{type(error).__name__}: {error}"}
+
+    def authority(self) -> dict[str, Any]:
+        result = []
+        for town in self.towns.values():
+            if town.kind != "authority":
+                continue
+            try:
+                registry = self._registry(town)
+                issuers = [{"id": item.get("id"), "slug": item.get("slug"), "name": item.get("name"), "role": item.get("role"),
+                            "publicKey": item.get("publicKey"),
+                            "accreditedBy": sorted({acc.get("issuer") for acc in item.get("accreditations") or [] if acc.get("issuer")})}
+                           for item in registry.issuers()]
+                applications = [{key: item.get(key) for key in ("id", "state", "credential_type", "issuer", "holder", "created", "decided", "decided_by", "reason")}
+                                | {"purpose": str(item.get("purpose") or "")[:200]} for item in registry.applications()]
+                credentials = []
+                for path in sorted((Path(registry.root) / "credentials").glob("*.json")):
+                    document = _read_json(path) or {}
+                    subject = document.get("credentialSubject") or {}
+                    types = document.get("type") or []
+                    credentials.append({"id": document.get("id"), "type": [t for t in types if t != "VerifiableCredential"],
+                                        "issuer": document.get("issuer"), "holder": subject.get("id"), "scope": subject.get("scope"),
+                                        "dataset": subject.get("dataset"), "validFrom": document.get("validFrom"),
+                                        "validUntil": document.get("validUntil"),
+                                        "status": registry.status(document["id"]) if document.get("id") else "unknown"})
+                result.append({"town": town.name, "display": town.display, "issuers": issuers, "applications": applications, "credentials": credentials})
+            except Exception as error:  # noqa: BLE001
+                result.append({"town": town.name, "display": town.display, "error": f"{type(error).__name__}: {error}"})
+        return {"authorities": result}
+
+    def sites(self) -> dict[str, Any]:
+        from .compute import TEMPLATES
+        from .compute.runner import pick_site
+        from .rcp import capability
+
+        result = []
+        now = time.time()
+        for town in self.towns.values():
+            if town.kind != "pangenome":
+                continue
+            cached = self._sites_cache.get(town.name)
+            if cached and now - cached[0] < 60:
+                result.append(cached[1])
+                continue
+            try:
+                _, report = capability.site_facts(town)
+                templates = {}
+                for name in TEMPLATES:
+                    site, _ = pick_site(town, name)
+                    templates[name] = site.name if site else None
+                entry = {"town": town.name, "display": town.display, "sites": report, "templates": templates}
+            except Exception as error:  # noqa: BLE001
+                entry = {"town": town.name, "display": town.display, "error": f"{type(error).__name__}: {error}"}
+            self._sites_cache[town.name] = (now, entry)
+            result.append(entry)
+        return {"towns": result}
 
     def events_since(self, after: int, limit: int = 200) -> list[dict[str, Any]]:
         return self.log.events(None, limit=limit, after=after)
@@ -313,6 +386,10 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK if message else HTTPStatus.NOT_FOUND, message or {"error": "unknown exchange"})
                 elif route == "/api/ledger":
                     self._json(HTTPStatus.OK, state.ledger())
+                elif route == "/api/authority":
+                    self._json(HTTPStatus.OK, state.authority())
+                elif route == "/api/sites":
+                    self._json(HTTPStatus.OK, state.sites())
                 elif route == "/api/events":
                     after = int(query.get("after", ["0"])[0])
                     self._json(HTTPStatus.OK, {"events": state.events_since(after)})

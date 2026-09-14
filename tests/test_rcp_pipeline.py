@@ -5,8 +5,8 @@ import pytest
 from research_commons.km import Classification
 
 from pangenome_town.exchange import ExchangeLog
-from pangenome_town.tools import graph
 from pangenome_town.rcp import PG, a2a, contract, pipeline
+from pangenome_town.tools import graph
 from pangenome_town.tools.graph import Region
 
 needs_tools = pytest.mark.skipif(shutil.which("vg") is None or shutil.which("bcftools") is None, reason="vg/bcftools missing")
@@ -97,7 +97,13 @@ def test_large_task_needs_reputation_or_approval(node):
     assert state["state"] == "input-required" and "approval" in state["message"]["parts"][0]["text"]
     trusted = pipeline.task_document(ubar, f"{PG}WholeGraphDeconstructTask", requester="https://w3id.org/academic-wasteland/yamatai/agents/townsfolk", on_behalf_of="https://orcid.org/0000-0001-8149-5890")
     task = _send(node, trusted)["result"]
-    assert task["status"]["state"] == "working" and task["metadata"]["verdict"]["standing"] == "reputable"
+    assert task["metadata"]["verdict"]["standing"] == "reputable"
+    # Standing is established, so the task reaches the capability gate: a whole-contig deconstruct needs more
+    # memory and wall time than the default site grants, and the validator refuses it before anything runs.
+    assert task["status"]["state"] == "input-required", task["status"]
+    refusal = task["metadata"]["refusal"]
+    assert refusal["gate"] == "capability" and refusal["reason"] in {"exceeds-site-limits", "no-capability", "workflow-rejected"}
+    assert task["metadata"]["gates"]["standing"] == "pass"
 
 
 def test_blocked_and_malformed_tasks_are_rejected(node):

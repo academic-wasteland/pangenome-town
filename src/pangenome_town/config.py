@@ -35,6 +35,7 @@ class TownConfig:
     state_dir: Path
     citation: str = ""
     extra: dict = field(default_factory=dict)
+    kind: str = "pangenome"  # "pangenome" towns serve a graph; "authority" towns (Camelot) issue credentials
 
     @property
     def mail_recipient(self) -> str:
@@ -73,13 +74,16 @@ def load(path: Path | str) -> TownConfig:
     if not isinstance(town, dict):
         raise TownConfigError(f"{path}: missing [town] table")
     base = path.parent
-    for key in ("name", "population", "samples"):
+    kind = str(town.get("kind") or "pangenome")
+    if kind not in {"pangenome", "authority"}:
+        raise TownConfigError(f"{path}: [town].kind must be 'pangenome' or 'authority'")
+    for key in ("name", "population", "samples") if kind == "pangenome" else ("name",):
         if key not in town:
             raise TownConfigError(f"{path}: [town].{key} is required")
     name = str(town["name"])
     if not name.isidentifier():
         raise TownConfigError(f"{path}: town name {name!r} must be an identifier")
-    samples = tuple(str(sample) for sample in town["samples"])
+    samples = tuple(str(sample) for sample in town.get("samples") or ())
     peers = {str(key): str(value) for key, value in (town.get("peers") or {}).items()}
     data_table = data.get("data") or {}
     exchange = data.get("exchange") or {}
@@ -87,7 +91,7 @@ def load(path: Path | str) -> TownConfig:
     return TownConfig(
         name=name,
         display=str(town.get("display") or name),
-        population=str(town["population"]),
+        population=str(town.get("population") or ""),
         samples=samples,
         peers=peers,
         city_root=_path(base, town.get("city_root")) or base,
@@ -103,6 +107,7 @@ def load(path: Path | str) -> TownConfig:
         state_dir=state_dir,
         citation=str(town.get("citation") or ""),
         extra={key: value for key, value in data.items() if key not in {"town", "data", "exchange"}},
+        kind=kind,
     )
 
 

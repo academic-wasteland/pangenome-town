@@ -22,6 +22,9 @@ QUANTITIES = {
     "subgraph": [("segments", "segmentCount"), ("links", "linkCount"), ("paths", "pathCount")],
     "summary": [("paths_total", "pathCount"), ("graph.nodes", "nodeCount"), ("graph.edges", "edgeCount")],
     "compare": [("sites_compared", "comparedSiteCount"), ("differentiated_sites", "differentiatedSiteCount"), ("town_private_sites", "populationPrivateSiteCount"), ("mean_abs_delta", "meanAbsoluteFrequencyDifference")],
+    "allele-frequency": [("variant_count", "variantSiteCount"), ("sample_count", "sampleCount"), ("mean_alt_frequency", "meanAlternateAlleleFrequency")],
+    "genotype-export": [("variant_count", "variantSiteCount"), ("sample_count", "sampleCount")],
+    "deconstruct-region": [("variant_count", "deconstructedSiteCount")],
 }
 
 
@@ -67,6 +70,12 @@ def build(town: TownConfig, task: dict[str, Any], result: dict[str, Any], subjec
             "object": kind,
             "hasEvidence": [evidence_id],
         })
+    outputs = [
+        {"@id": f"urn:uuid:{uuid.uuid4()}", "@type": ["ResearchArtifact", item["class"]], "name": item["name"], "license": ARTIFACT_LICENSE, "digest": item["digest"]}
+        for item in result.get("outputs") or []
+    ] or [
+        {"@id": artifact_id, "@type": "ResearchArtifact", "name": artifact_path.name, "license": ARTIFACT_LICENSE, "digest": digest}
+    ]
     return {
         "@context": CONTEXT_IRI,
         "@id": f"urn:uuid:{uuid.uuid4()}",
@@ -76,9 +85,7 @@ def build(town: TownConfig, task: dict[str, Any], result: dict[str, Any], subjec
         "addresses": task["@id"],
         "producedBy": {"@id": agent_iri(town), "@type": "Agent", "name": f"{town.display} townsfolk"},
         "generatedAtTime": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "hasOutput": [
-            {"@id": artifact_id, "@type": "ResearchArtifact", "name": artifact_path.name, "license": ARTIFACT_LICENSE, "digest": digest}
-        ],
+        "hasOutput": outputs,
         "hasClaim": claims,
         "hasEvidence": [
             {"@id": evidence_id, "@type": "Evidence", "name": f"{kind} query artifact with provenance", "digest": digest, "license": ARTIFACT_LICENSE}

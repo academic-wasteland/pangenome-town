@@ -16,6 +16,7 @@ from .pipeline import Node, TaskRecord
 TASK_PROFILE = 'application/ld+json;profile="https://w3id.org/research-commons/v0.1/task"'
 CONTRIBUTION_PROFILE = 'application/ld+json;profile="https://w3id.org/research-commons/v0.1/contribution"'
 REPORT_PROFILE = 'application/json;profile="https://w3id.org/research-commons/v0.1/semantic-validation-report"'
+PRESENTATION_PROFILE = 'application/json;profile="https://w3id.org/academic-wasteland/credentials/v0.1/presentation"'
 
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL = -32700, -32600, -32601, -32602, -32603
 TASK_NOT_FOUND, UNSUPPORTED_OPERATION, CONTENT_TYPE_NOT_SUPPORTED = -32001, -32004, -32005
@@ -49,29 +50,48 @@ def task_view(record: TaskRecord) -> dict[str, Any]:
     if record.message:
         status["message"] = {"role": "agent", "messageId": f"{record.id}#status", "parts": [{"kind": "text", "text": record.message}]}
     return {"id": record.id, "contextId": record.context_id or record.id, "kind": "task", "status": status,
-            "artifacts": artifacts, "metadata": {"verdict": record.verdict}}
+            "artifacts": artifacts,
+            "metadata": {"verdict": record.verdict, "gates": getattr(record, "gates", None), "refusal": getattr(record, "refusal", None),
+                         "authority": getattr(record, "authority", None), "sites": getattr(record, "sites", None)}}
 
 
-def _task_part(params: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _is_presentation(part: dict[str, Any], data: dict[str, Any]) -> bool:
+    media = (part.get("metadata") or {}).get("mediaType") if isinstance(part.get("metadata"), dict) else None
+    return media == PRESENTATION_PROFILE or data.get("type") == "Presentation"
+
+
+def _message_parts(params: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """Return (task, presentation, problem): the first task data part and at most one credential presentation."""
     message = params.get("message")
     if not isinstance(message, dict):
-        return None, "params.message is required"
+        return None, None, "params.message is required"
     parts = message.get("parts")
     if not isinstance(parts, list) or not parts:
-        return None, "params.message.parts must be a non-empty list"
+        return None, None, "params.message.parts must be a non-empty list"
+    task: dict[str, Any] | None = None
+    presentations: list[dict[str, Any]] = []
     for part in parts:
         if not isinstance(part, dict):
             continue
+        data: Any = None
         if part.get("kind") == "data" and isinstance(part.get("data"), dict):
-            return part["data"], None
-        if part.get("kind") == "text" and isinstance(part.get("text"), str):
+            data = part["data"]
+        elif part.get("kind") == "text" and isinstance(part.get("text"), str):
             try:
-                loaded = json.loads(part["text"])
+                data = json.loads(part["text"])
             except json.JSONDecodeError:
                 continue
-            if isinstance(loaded, dict):
-                return loaded, None
-    return None, "no data part carrying a Research Commons task was found"
+        if not isinstance(data, dict):
+            continue
+        if _is_presentation(part, data):
+            presentations.append(data)
+        elif task is None:
+            task = data
+    if task is None:
+        return None, None, "no data part carrying a Research Commons task was found"
+    if len(presentations) > 1:
+        return None, None, "at most one credential presentation part is allowed"
+    return task, (presentations[0] if presentations else None), None
 
 
 def handle(node: Node, request: Any, *, requester_hint: str | None = None) -> dict[str, Any]:
@@ -81,12 +101,12 @@ def handle(node: Node, request: Any, *, requester_hint: str | None = None) -> di
     method = request["method"]
     params = request.get("params") if isinstance(request.get("params"), dict) else {}
     if method == "message/send":
-        document, problem = _task_part(params)
+        document, presentation, problem = _message_parts(params)
         if problem:
             return error(request_id, INVALID_PARAMS, problem)
         context_id = params["message"].get("contextId") if isinstance(params.get("message"), dict) else None
         hint = requester_hint or (params["message"].get("metadata") or {}).get("town") if isinstance(params.get("message"), dict) else requester_hint
-        record = node.submit(document, context_id=context_id, requester_hint=hint)
+        record = node.submit(document, context_id=context_id, requester_hint=hint, presentation=presentation)
         return result(request_id, task_view(record))
     if method == "tasks/get":
         task_id = params.get("id")

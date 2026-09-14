@@ -127,6 +127,49 @@ requester-side semantic re-validation of returned contributions against the
 peer's contract (the requester currently checks structure and digests and
 carries the peer's own report in the stamp).
 
+## Resources, credentials, and compute (step 4)
+
+Design: [docs/resources-and-credentials.md](docs/resources-and-credentials.md). A task passes four gates, each
+decided by the mechanism that fits it:
+
+| Gate | Question | Decided by | Buyable with reputation |
+|---|---|---|---|
+| admissibility | a task we serve, on data we hold | `km` over the contract | no |
+| authority | verified, trusted, in-scope credentials | code verifies signatures, binding, validity, revocation; `km` decides trust and scope | never |
+| standing | worth our scarce compute | commons stamps as receiver facts, `km` decides | yes |
+| capability | runnable here, within limits | site reachability as receiver facts; workflow validator, OS limits, scheduler | no |
+
+- **Authority town.** [Camelot](https://github.com/academic-wasteland/camelot) hosts demo issuers (an
+  accreditation council that Ubar and Yamatai anchor trust in, an ethics board, data access committees).
+  Researchers apply with `pangenome-town holder apply`; a human decides with `pangenome-town authority
+  approve|deny|revoke`; residents on local Qwen only recommend. Credentials are Ed25519-signed JSON shaped
+  like W3C Verifiable Credentials; a task carries them in a holder-signed presentation bound to that task.
+- **Controlled tasks.** `AlleleFrequencyTask` and `IndividualGenotypeExportTask` on a town's restricted
+  dataset need a vetted `DataAccessAuthorization` and `EthicsApproval` whose scope class covers the task.
+  Every released output must belong to the scope's release class, or the contribution is withheld.
+- **Sites and the rigger.** `[[sites]]` in `town.toml` lists compute the town can reach (`local`, or `ssh`
+  with optional Slurm). The town holds the capability; peers get execution, never keys. Templates
+  (`allele-frequency`, `genotype-export`, `deconstruct-region`) are validated against the site's tools and
+  limits before anything runs. Refusals name the gate and, for capability, peers that hold the same data.
+
+```bash
+pangenome-town --town ../yamatai/town.toml holder new --holder https://orcid.org/<orcid>
+pangenome-town --town ../yamatai/town.toml holder apply --holder https://orcid.org/<orcid> --type DataAccessAuthorization \
+  --issuer ubar-dac --dataset https://w3id.org/academic-wasteland/ubar/datasets/ksa-individual-genotypes \
+  --scope https://w3id.org/academic-wasteland/pangenome-town/contract/AggregateFrequencyScope --purpose "..."
+pangenome-town --town ../camelot/town.toml authority approve app-xxxxxxxx      # a human decision
+pangenome-town --town ../yamatai/town.toml holder fetch --holder https://orcid.org/<orcid> app-xxxxxxxx
+pangenome-town --town ../yamatai/town.toml rcp submit --to ubar --kind allele-frequency \
+  --region GRCh38:chr6:29940000-29990000 --on-behalf-of https://orcid.org/<orcid> --holder https://orcid.org/<orcid>
+pangenome-town compute sites                      # reachability and which templates run where
+pangenome-town compute plan allele-frequency --region GRCh38:chr6:29940000-29990000
+```
+
+Not yet done: enabling the DDBJ site (needs a decision on which host and account may run jobs; the gateway
+is not a compute node), requester-held compute allocations, issuance as RCP contributions, content
+inspection of released outputs, and a workstation envelope large enough for whole-contig `vg deconstruct`
+(it needs about 48 GB and up to two hours on JaSaPaGe, so the default limits refuse it).
+
 ## Queries
 
 `pangenome-town query --kind <summary|haplotypes|variants|subgraph|compare> --region GRCh38:chr6:31000000-31050000`

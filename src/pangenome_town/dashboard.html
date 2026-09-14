@@ -31,6 +31,11 @@ table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px
 details summary{cursor:pointer;color:var(--accent)}
 .row{display:flex;flex-wrap:wrap;gap:16px}.row>div{flex:1 1 320px;min-width:0}
 a{color:var(--accent)}
+.gate{font-weight:600}.gate.pass{color:var(--ok)}.gate.pending{color:var(--warn)}.gate.fail,.gate.indeterminate{color:var(--bad)}.gate.na{color:var(--muted)}
+.refusal{border:1px solid var(--warn);border-radius:6px;padding:6px 8px;margin-top:8px}
+.refusal.rejected{border-color:var(--bad)}
+.tag-controlled{border-color:var(--bad);color:var(--bad)}
+.scroll{overflow-x:auto}
 @media (max-width:700px){.lanes{grid-template-columns:1fr}}
 </style>
 </head>
@@ -57,6 +62,16 @@ a{color:var(--accent)}
   <div id="ledger" class="row"></div>
 </section>
 
+<section>
+  <h2>Authority: Camelot</h2>
+  <div id="authority" class="row"></div>
+</section>
+
+<section>
+  <h2>Compute sites</h2>
+  <div id="sites" class="row"></div>
+</section>
+
 <section id="detail" hidden>
   <h2>Exchange detail</h2>
   <div id="detail-body"></div>
@@ -70,6 +85,36 @@ let towns = [], laneOrder = [], selected = null, lastSeq = 0;
 
 function statusClass(s){ return {answered:"ok",delivered:"ok",sent:"ok",received:"warn",dispatched:"warn",sending:"warn",failed:"bad",delivery_failed:"bad","rcp-completed":"ok","rcp-working":"warn","rcp-input-required":"warn","rcp-rejected":"bad","rcp-failed":"bad",entailed:"ok",unknown:"warn",contradicted:"bad",invalid:"bad",indeterminate:"bad",reputable:"ok",unvetted:"warn",blocked:"bad"}[s] || "muted"; }
 
+const short = (s) => String(s ?? "").split(/[\/#]/).filter(Boolean).pop() || "";
+const GATES = ["admissibility","authority","standing","capability"];
+const CONTROLLED = ["AlleleFrequencyTask","IndividualGenotypeExportTask"];
+function gateChips(g){
+  if (!g) return "";
+  return `<div style="margin-top:6px">${GATES.map(k => { const v = g[k] ?? "n/a"; return `<span class="chip">${k} <span class="gate ${v==="n/a"?"na":esc(v)}">${esc(v)}</span></span>`; }).join("")}</div>`;
+}
+function renderRefusal(rf, state){
+  if (!rf) return "";
+  const needs = (rf.needs||[]).map(n => `<li>${esc(n.type)} under ${(n.under_trust_anchors||[]).map(a => `<span class="mono">${esc(short(a))}</span>`).join(", ") || "a trust anchor"}</li>`).join("");
+  const refs = (rf.referrals||[]).map(r => `<li>${esc(r.town)} on site ${esc(r.site)}</li>`).join("");
+  const probs = (rf.credentials||[]).filter(c => (c.problems||[]).length).map(c => `<li><span class="mono">${esc((c.types||[]).filter(t=>t!=="VerifiableCredential").join(","))}</span> from ${esc(short(c.issuer))}: ${esc(c.problems.join("; "))}</li>`).join("");
+  const pp = (rf.presentation_problems||[]).map(p => `<li>${esc(p)}</li>`).join("");
+  return `<div class="refusal ${state==="rejected"?"rejected":""}"><strong>refused at ${esc(rf.gate||"?")}</strong>: ${esc(rf.reason||"")}${rf.detail?` <span class="muted">${esc(String(rf.detail).slice(0,300))}</span>`:""}
+    ${needs?`<div>needs:<ul>${needs}</ul></div>`:""}${refs?`<div>referrals:<ul>${refs}</ul></div>`:""}${probs?`<div>credential problems:<ul>${probs}</ul></div>`:""}${pp?`<div>presentation problems:<ul>${pp}</ul></div>`:""}
+    ${rf.score!=null?`<div class="muted">score ${esc(rf.score)} / threshold ${esc(rf.threshold)}</div>`:""}</div>`;
+}
+function renderAuthority(auth, rep){
+  if (!auth || !(auth.credentials||[]).length) return auth && auth.presented===false ? '<div class="muted" style="margin-top:6px">no credentials presented</div>' : "";
+  const r = (rep && rep.task) ? rep.task : rep; const checks = {};
+  ((r||{}).checks||[]).forEach(c => { checks[c.kind] = c.status; });
+  const probe = (label, kind) => { const v = checks[kind+":"+label]; return v ? `<span class="status ${statusClass(v)}">${esc(v)}</span>` : '<span class="muted">-</span>'; };
+  return `<h2>Credentials presented</h2><div class="scroll"><table><tr><th>type</th><th>issuer</th><th>scope</th><th>verified</th><th>status</th><th>scope</th><th>covers</th><th>vetted</th></tr>${auth.credentials.map(c => `<tr><td>${esc((c.types||[]).filter(t=>t!=="VerifiableCredential").join(", "))}</td><td>${esc(short(c.issuer))}</td><td>${esc(short(c.scope))}</td><td><span class="status ${c.verified?"ok":"bad"}">${c.verified?"yes":"no"}</span></td><td>${esc(c.status||"")}</td><td>${probe(c.label,"scope")}</td><td>${probe(c.label,"covers")}</td><td>${probe(c.label,"vetted")}</td></tr>`).join("")}</table></div>
+    ${(auth.problems||[]).length?`<div class="bad">${esc(auth.problems.join("; "))}</div>`:""}`;
+}
+function renderSitesTable(sites){
+  if (!sites || !sites.length) return "";
+  return `<div class="scroll"><table><tr><th>site</th><th>driver</th><th>enabled</th><th>reachable</th><th>detail</th><th>datasets</th><th>limits</th></tr>${sites.map(s => `<tr><td>${esc(s.site)}</td><td>${esc(s.driver)}${s.scheduler&&s.scheduler!=="none"?" / "+esc(s.scheduler):""}</td><td>${s.enabled?"yes":"no"}</td><td><span class="status ${s.reachable?"ok":"bad"}">${s.reachable?"yes":"no"}</span></td><td class="muted">${esc(s.detail||"")}</td><td class="mono">${esc((s.datasets||[]).join(", "))}</td><td class="muted">${s.limits?`${s.limits.cpus} cpu, ${s.limits.mem_gb} GB, ${s.limits.wall_seconds} s`:""}</td></tr>`).join("")}</table></div>`;
+}
+
 function renderRcp(rcp){
   if (!rcp) return "";
   const v = rcp.verdict || {}; const rep = rcp.report || {};
@@ -77,7 +122,11 @@ function renderRcp(rcp){
   const task = rcp.task || {}; const claims = (rcp.contribution||{}).hasClaim || [];
   return `<h2>Research Commons Protocol</h2>
     <div class="card">
-      <div><span class="chip ${statusClass("rcp-"+rcp.state)}">${esc(rcp.state)}</span> <span class="mono muted">${esc((task.taskType||"").split("/").pop())}</span></div>
+      <div><span class="chip ${statusClass("rcp-"+rcp.state)}">${esc(rcp.state)}</span> <span class="mono muted">${esc((task.taskType||"").split("/").pop())}</span>${CONTROLLED.includes(short(task.taskType))?' <span class="chip tag-controlled">controlled</span>':""}</div>
+      ${gateChips(rcp.gates)}
+      ${renderRefusal(rcp.refusal, rcp.state)}
+      ${renderAuthority(rcp.authority, rep)}
+      ${(rcp.sites||[]).length?`<h2>Compute sites</h2>${renderSitesTable(rcp.sites)}`:""}
       <div style="margin-top:6px">requester <span class="mono">${esc((task.requestedBy||{})["@id"]||"")}</span> → standing <span class="status ${statusClass(v.standing)}">${esc(v.standing||"?")}</span>${v.score!=null?` (score ${v.score})`:""} <span class="muted">${esc(v.reason||"")}</span></div>
       <div class="muted" style="margin-top:4px">contract ${esc(task.semanticContract||"")} · profile ${esc((task.ontologyProfile||"").slice(0,23))}…</div>
       ${rcp.ledger ? `<div class="muted" style="margin-top:4px">commons: ${esc(JSON.stringify(rcp.ledger))}</div>` : ""}
@@ -100,18 +149,33 @@ async function loadLedger(){
   $("#ledger").innerHTML = board + stamps + wanted;
 }
 
+async function loadAuthority(){
+  const j = await (await fetch("/api/authority")).json();
+  if (!j.authorities.length){ $("#authority").innerHTML = '<span class="muted">no authority town configured</span>'; return; }
+  $("#authority").innerHTML = j.authorities.map(a => a.error ? `<div class="bad">${esc(a.town)}: ${esc(a.error)}</div>` : `
+    <div><h2>Issuers</h2><div class="scroll"><table><tr><th>issuer</th><th>role</th><th>accredited by</th></tr>${a.issuers.map(i => `<tr><td>${esc(i.name||i.slug)}</td><td>${esc(i.role)}</td><td>${i.accreditedBy.map(x=>esc(short(x))).join(", ") || '<span class="muted">trust anchor or none</span>'}</td></tr>`).join("")}</table></div></div>
+    <div><h2>Applications</h2><div class="scroll"><table><tr><th>id</th><th>type</th><th>issuer</th><th>holder</th><th>state</th></tr>${a.applications.map(p => `<tr title="${esc(p.purpose)}"><td class="mono">${esc(p.id)}</td><td>${esc(p.credential_type)}</td><td>${esc(p.issuer)}</td><td class="mono">${esc(short(p.holder))}</td><td><span class="chip ${({approved:"ok",pending:"warn",denied:"bad"})[p.state]||""}">${esc(p.state)}</span></td></tr>`).join("") || '<tr><td colspan="5" class="muted">none</td></tr>'}</table></div></div>
+    <div><h2>Credentials</h2><div class="scroll"><table><tr><th>type</th><th>issuer</th><th>holder</th><th>scope</th><th>valid until</th><th>status</th></tr>${a.credentials.map(c => `<tr><td>${esc(c.type.join(", "))}</td><td>${esc(short(c.issuer))}</td><td class="mono">${esc(short(c.holder))}</td><td>${esc(short(c.scope))}</td><td class="muted">${esc(c.validUntil||"")}</td><td><span class="chip ${({active:"ok",revoked:"bad"})[c.status]||"warn"}">${esc(c.status)}</span></td></tr>`).join("") || '<tr><td colspan="6" class="muted">none issued</td></tr>'}</table></div></div>`).join("");
+}
+
+async function loadSites(){
+  const j = await (await fetch("/api/sites")).json();
+  $("#sites").innerHTML = j.towns.map(t => t.error ? `<div class="bad">${esc(t.town)}: ${esc(t.error)}</div>` : `<div><div><strong>${esc(t.display)}</strong></div>${renderSitesTable(t.sites)}
+    <div style="margin-top:4px">${Object.entries(t.templates).map(([k,v]) => `<span class="chip ${v?"ok":"muted"}">${esc(k)}: ${v?esc(v):"nowhere"}</span>`).join("")}</div></div>`).join("") || '<span class="muted">no pangenome towns</span>';
+}
+
 async function loadTowns(){
   const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = towns.map(t => t.name);
   $("#towns").innerHTML = towns.map(t => `
     <div class="card">
-      <div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.name)} · ${esc(t.population)}</span></div>
+      <div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.name)} · ${t.kind==="authority"?"authority town":esc(t.population)}</span></div>
       <div style="margin-top:4px">
         <span class="chip ${t.city_running?"ok":"bad"}">city ${t.city_running?"running":"down"}</span>
         <span class="chip ${t.envoy_ok?"ok":"bad"}">envoy ${t.envoy_ok?"ok":"down"}</span>
-        <span class="chip ${t.graph_present?"ok":"warn"}">graph ${t.graph_present?"present":"missing"}</span>
-        <span class="chip ${t.vcf_present?"ok":"warn"}">vcf ${t.vcf_present?"present":"missing"}</span>
+        ${t.kind==="authority" ? `<span class="chip">${esc((t.authority||{}).issuers ?? "?")} issuers</span><span class="chip ${(t.authority||{}).pending_applications?"warn":""}">${esc((t.authority||{}).pending_applications ?? "?")} pending applications</span>` : `<span class="chip ${t.graph_present?"ok":"warn"}">graph ${t.graph_present?"present":"missing"}</span>
+        <span class="chip ${t.vcf_present?"ok":"warn"}">vcf ${t.vcf_present?"present":"missing"}</span>`}
       </div>
-      <div class="muted" style="margin-top:6px">${t.samples.length} samples served · peers: ${t.peers.map(esc).join(", ") || "none"}</div>
+      <div class="muted" style="margin-top:6px">${t.kind==="authority"?"":t.samples.length+" samples served · "}peers: ${t.peers.map(esc).join(", ") || "none"}</div>
       ${t.graph_summary && t.graph_summary.paths_total ? `<div class="muted">graph: ${Object.entries(t.graph_summary.graph||{}).map(([k,v])=>k+" "+v.toLocaleString()).join(", ")}; ${t.graph_summary.paths_total.toLocaleString()} paths</div>` : ""}
       <div style="margin-top:6px">${t.sessions.length ? t.sessions.map(s => `<span class="chip">${esc(s.template.split("/").pop())} · ${esc(s.state)}</span>`).join("") : '<span class="muted">no sessions</span>'}</div>
       <div class="muted" style="margin-top:6px">agent spend: ${t.costs.available ? `$${t.costs.usd} · ${t.costs.assistant_turns} turns · ${(t.costs.tokens.input+t.costs.tokens.output).toLocaleString()} tokens` : "n/a"}</div>
@@ -126,7 +190,7 @@ async function loadExchanges(){
     const mine = xs.filter(x => x.from === name);
     return `<div class="lane-${i%2?"b":"a"}"><div class="hdr">${esc(name)} <span class="muted">sent ${mine.length}</span></div>` +
       mine.map(x => `<div class="msg ${selected===x.id?"sel":""}" data-id="${esc(x.id)}">
-        <div class="k">${x.rcp?'<span class="chip">RCP</span> ':''}${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
+        <div class="k">${x.rcp?'<span class="chip">RCP</span> ':''}${CONTROLLED.includes(short(x.envelope.body.rcp_task_type))?'<span class="chip tag-controlled">controlled</span> ':''}${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
         <div class="t">${esc((x.envelope.body.text||"").slice(0,220))}</div>
         ${x.envelope.body.region?`<div class="mono muted">${esc(x.envelope.body.region)}</div>`:""}
       </div>`).join("") + `</div>`;
@@ -183,11 +247,11 @@ function connect(){
   const es = new EventSource("/api/events/stream?after=" + lastSeq);
   es.onopen = () => { $("#live").textContent = "on"; $("#live").className = "ok"; };
   es.onerror = () => { $("#live").textContent = "reconnecting"; $("#live").className = "warn"; };
-  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); });
+  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); if (String(ev.kind).startsWith("rcp_") || ["application_received","credential_issued","credential_revoked","application_denied"].includes(ev.kind)) { loadAuthority(); loadSites(); loadTowns(); } });
 }
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
 setInterval(loadTowns, 30000);
-loadTowns().then(loadExchanges).then(loadLedger).then(connect);
+loadTowns().then(loadExchanges).then(loadLedger).then(loadAuthority).then(loadSites).then(connect);
 setInterval(loadLedger, 60000);
 </script>
 </body>
