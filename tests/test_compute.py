@@ -479,3 +479,31 @@ def test_remote_allele_frequency_keeps_genotypes_on_the_site(fake_remote, towns,
     script = Path(f"{fake_remote['log']}.jobsh").read_text(encoding="utf-8")
     assert "awk -F" in script and "rm -f" in script and "genotypes.tsv" in script
     assert not list(tmp_path.rglob("genotypes.tsv"))
+
+
+def test_pick_site_requires_the_controlled_dataset_the_task_uses(towns, toy_data):
+    from pangenome_town.compute.sites import clear_reachability_cache
+
+    clear_reachability_cache()
+    town = towns["yamatai"]
+    path = town.city_root / "town.toml"
+    path.write_text(path.read_text() + f"""
+[[sites]]
+name = "workstation"
+driver = "local"
+datasets = ["vcf"]
+paths = {{ vcf = "{toy_data['vcf']}" }}
+tools = ["bcftools"]
+
+[[sites]]
+name = "cluster"
+driver = "local"
+datasets = ["vcf", "jpt-individual-genotypes"]
+paths = {{ vcf = "{toy_data['vcf']}", "jpt-individual-genotypes" = "{toy_data['vcf']}" }}
+tools = ["bcftools"]
+""", encoding="utf-8")
+    town = config.load(path)
+    assert pick_site(town, "allele-frequency")[0].name == "workstation"
+    site, diagnostics = pick_site(town, "allele-frequency", ("jpt-individual-genotypes",))
+    assert site.name == "cluster"
+    assert any(item["site"] == "workstation" and "does not hold jpt-individual-genotypes" in item["detail"] for item in diagnostics)

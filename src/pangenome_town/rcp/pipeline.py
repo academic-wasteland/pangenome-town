@@ -424,8 +424,12 @@ class Node:
             subject = next((dataset["iri"] for dataset in contract.restricted_datasets(self.town)
                             if dataset["iri"] in {_iri(item) for item in document.get("usesDataset") or []}), subject)
         out_dir = record.directory / "artifacts"
+        keys = contract.dataset_keys(self.town)
+        served_restricted = {item["iri"] for item in contract.restricted_datasets(self.town)}
+        extra = tuple(sorted({keys[iri] for iri in _dataset_iris(document) if iri in served_restricted}))
         try:
-            result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec, driver=self.compute_driver)
+            result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec,
+                                             driver=self.compute_driver, extra_datasets=extra)
         except ComputeError as error:
             text = str(error)
             if record.gates is not None:

@@ -56,20 +56,22 @@ def summarize_aggregate(table: Path, sample_count: int) -> dict[str, Any]:
             "mean_alt_frequency": round(sum(frequencies) / len(frequencies), 6) if frequencies else None}
 
 
-def pick_site(town: TownConfig, template_name: str) -> tuple[Site | None, list[dict[str, Any]]]:
-    """The first enabled, reachable site that holds the template's datasets and tools, with diagnostics."""
+def pick_site(town: TownConfig, template_name: str, extra_datasets: tuple[str, ...] = ()) -> tuple[Site | None, list[dict[str, Any]]]:
+    """The first enabled, reachable site that holds the template's datasets (plus `extra_datasets`, such as the
+    controlled dataset a task uses, so data that resides only at one site is only used there) and tools."""
     template = TEMPLATES.get(template_name)
     if template is None:
         raise ComputeError(f"unknown workflow template {template_name!r}")
     chosen: Site | None = None
     diagnostics: list[dict[str, Any]] = []
     for site in load_sites(town):
-        holds = all(key in site.datasets for key in template.datasets)
+        required = (*template.datasets, *extra_datasets)
+        holds = all(key in site.datasets for key in required)
         missing_tools = [tool for tool in template.tools if tool not in site.tools]
         if not site.enabled:
             ok, detail = False, "disabled in town.toml"
         elif not holds:
-            ok, detail = False, f"does not hold {', '.join(key for key in template.datasets if key not in site.datasets)}"
+            ok, detail = False, f"does not hold {', '.join(key for key in required if key not in site.datasets)}"
         elif missing_tools:
             ok, detail = False, f"does not allow {', '.join(missing_tools)}"
         else:
@@ -90,15 +92,16 @@ def run_task(
     spec: dict[str, Any] | None = None,
     threads: int = 1,
     driver: Any | None = None,
+    extra_datasets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     template = TEMPLATES.get(template_name)
     if template is None:
         raise ComputeError(f"unknown workflow template {template_name!r}")
     if site is None:
-        site, diagnostics = pick_site(town, template_name)
+        site, diagnostics = pick_site(town, template_name, extra_datasets)
         if site is None:
             reasons = "; ".join(f"{item['site']}: {item['detail']}" for item in diagnostics) or "no sites declared"
-            raise ComputeError(f"no reachable site holds {', '.join(template.datasets)} ({reasons})")
+            raise ComputeError(f"no reachable site holds {', '.join((*template.datasets, *extra_datasets))} ({reasons})")
     samples = list(town.samples)
     if spec is None:
         spec = plan(template_name, region=region, site=site, samples=samples, threads=threads, town=town)
