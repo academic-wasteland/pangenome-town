@@ -93,3 +93,19 @@ def test_read_views(cockpit):
     status, agents = request(base + "/api/agentsview")
     assert status == 200 and agents["available"] is False
     assert json.dumps(monitor).count(state.token) == 0
+
+
+def test_concurrent_reads_share_the_log_safely(cockpit, towns):
+    import concurrent.futures
+
+    from pangenome_town.exchange import Envelope, ExchangeLog
+
+    log = ExchangeLog(towns["db"])
+    for index in range(30):
+        log.record(Envelope.new("question", "ubar", "yamatai", {"text": f"q{index}"}), town="yamatai", direction="received", status="received")
+    log.close()
+    _, base, _ = cockpit
+    routes = ["/api/exchanges?limit=200", "/api/monitor", "/api/decisions"] * 15
+    with concurrent.futures.ThreadPoolExecutor(12) as pool:
+        statuses = list(pool.map(lambda route: request(base + route)[0], routes))
+    assert statuses == [200] * len(routes)

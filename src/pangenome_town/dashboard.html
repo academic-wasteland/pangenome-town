@@ -263,7 +263,7 @@ async function loadTowns(){
 }
 
 async function loadExchanges(){
-  const r = await fetch("/api/exchanges?limit=200"); const j = await r.json();
+  const r = await fetch("/api/exchanges?limit=200"); if (!r.ok) return; const j = await r.json();
   const xs = j.exchanges; $("#xcount").textContent = `(${xs.length})`;
   const lanes = laneOrder.length ? laneOrder : [...new Set(xs.flatMap(x => [x.from, x.to]))];
   const html = lanes.map((name, i) => {
@@ -450,7 +450,7 @@ function renderFunnel(data){
   $("#mon-summary").textContent = `(${tasks.length} RCP tasks, ${data.messages.filter(m => now - toSec(m.created) <= span).length} messages in the last ${winKey})`;
 }
 async function loadMonitor(){
-  const data = await (await fetch("/api/monitor")).json(); monitorData = data;
+  const response = await fetch("/api/monitor"); if (!response.ok) return; const data = await response.json(); monitorData = data;
   const pos = renderNet(data); renderTimeline(data); renderFunnel(data);
   const fresh = [];
   data.messages.forEach(m => { const k = "m" + m.id + (m.state || m.status); if (!seenMonitor.has(k)) { seenMonitor.add(k); fresh.push(() => { const [f, t] = edgeOf(m); fly(pos, f, t, outcome(m)); }); } });
@@ -500,7 +500,7 @@ function fillRecipients(){
   $("#c-to-list").innerHTML = [...opts].map(o => `<option value="${esc(o)}">`).join("");
 }
 async function loadResidents(){
-  residentsData = await (await fetch("/api/residents")).json();
+  const response = await fetch("/api/residents"); if (!response.ok) return; residentsData = await response.json();
   const av = await (await fetch("/api/agentsview")).json().catch(() => ({sessions: []}));
   $("#residents-body").innerHTML = residentsData.towns.map(t => `<div class="card" style="margin-bottom:8px"><div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.kind)} town</span>${t.error ? ` <span class="bad">${esc(t.error)}</span>` : ""}</div>
     <div class="scroll"><table><tr><th>resident</th><th>role</th><th>model</th><th>sessions</th><th>actions</th></tr>
@@ -526,7 +526,7 @@ async function residentAction(d){
 
 /* ---------- decisions, trust, AgentsView, interfaces ---------- */
 async function loadDecisions(){
-  const j = await (await fetch("/api/decisions")).json();
+  const response = await fetch("/api/decisions"); if (!response.ok) return; const j = await response.json();
   const cards = j.authorities.flatMap(a => (a.pending || []).map(p => `<div class="card" style="margin-bottom:8px">
     <div><strong>${esc(p.credential_type)}</strong> for <span class="mono">${esc(short(p.holder))}</span> from <strong>${esc(p.issuer)}</strong> <span class="muted mono">${esc(p.id)} · ${esc(p.created)}</span></div>
     <div class="muted" style="margin-top:2px">${Object.entries(p.subject_fields || {}).map(([k, v]) => `${esc(k)}: ${esc(short(v))}`).join(" · ")}</div>

@@ -44,6 +44,25 @@ MAX_POST_BYTES = 65536
 AUTHORITY_EVENTS = {"application_received", "credential_issued", "credential_revoked", "application_denied"}
 
 
+class _LockedLog:
+    """Serialize every call into the shared SQLite connection: the dashboard serves requests on many threads."""
+
+    def __init__(self, log: ExchangeLog, lock: threading.RLock):
+        self._log = log
+        self._lock = lock
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._log, name)
+        if not callable(attribute):
+            return attribute
+
+        def locked(*args: Any, **kwargs: Any) -> Any:
+            with self._lock:
+                return attribute(*args, **kwargs)
+
+        return locked
+
+
 class ActionError(ValueError):
     """A cockpit action was malformed or not allowed."""
 
@@ -74,8 +93,8 @@ class DashboardState:
             raise config.TownConfigError("dashboard needs at least one town.toml")
         self.towns = {town.name: town for town in towns}
         self.supervisor_url = towns[0].supervisor_url.rstrip("/")
-        self.log = ExchangeLog(towns[0].exchange_db)
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.log = _LockedLog(ExchangeLog(towns[0].exchange_db), self.lock)
         self._sites_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._agentsview_cache: tuple[float, dict[str, Any]] | None = None
         self.token = secrets.token_urlsafe(24)
