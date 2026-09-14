@@ -16,7 +16,8 @@ def test_contract_renders_and_verifies(towns, tmp_path):
     assert f"{PG}RegionVariantListingTask" in allowed and f"{PG}GRCh38Region" in allowed
     text = (tmp_path / "contract" / "ubar.ofn").read_text()
     assert "Import(" not in text and "{{" not in text
-    assert "town:graphs/JaSaPaGe-v1" in text
+    assert "<https://w3id.org/academic-wasteland/ubar/graphs/JaSaPaGe-v1>" in text
+    assert "town:graphs/" not in text  # a slash is not legal in a prefixed local name
     card = contract.agent_card_extension(manifest, "https://example.org/ubar/contract.json")
     assert card["contracts"][0]["bundleDigest"] == manifest.bundle_digest
 
