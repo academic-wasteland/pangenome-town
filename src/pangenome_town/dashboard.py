@@ -149,10 +149,11 @@ def _artifacts(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _agent_window(events: list[dict[str, Any]], answers: list[dict[str, Any]]) -> tuple[float, float] | None:
-    starts = [e["ts"] for e in events if e["kind"] in {"received", "dispatched"}]
+    dispatched = [e["ts"] for e in events if e["kind"] == "dispatched"]
+    starts = dispatched or [e["ts"] for e in events if e["kind"] == "received"]
     if not starts:
         return None
-    start = _epoch(min(starts)) - 60
+    start = _epoch(min(starts)) - 30
     ends = [a["created"] for a in answers]
     end = _epoch(max(ends)) + 120 if ends else time.time()
     return start, end
