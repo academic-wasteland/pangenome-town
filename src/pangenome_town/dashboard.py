@@ -97,6 +97,7 @@ class DashboardState:
         self.log = _LockedLog(ExchangeLog(towns[0].exchange_db), self.lock)
         self._sites_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._agentsview_cache: tuple[float, dict[str, Any]] | None = None
+        self._mail_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self.token = secrets.token_urlsafe(24)
         self.runner = subprocess.run
         self.agentsview_url = AGENTSVIEW_URL
@@ -372,9 +373,8 @@ class DashboardState:
         for town in self.towns.values():
             if town.kind != "authority":
                 continue
-            mail = self.supervisor(f"/v0/city/{town.name}/mail?status=all", timeout=3)  # recommendations stay visible after they are read
             recommendations: dict[str, list[dict[str, Any]]] = {}
-            for item in (mail.get("items") if isinstance(mail, dict) else None) or []:
+            for item in self.mail_list(town.name)["messages"]:
                 subject = str(item.get("subject") or "")
                 match = _re.match(r"Recommendation (app-[0-9a-f]{8}): *(\w+)", subject)
                 if match:
@@ -428,17 +428,55 @@ class DashboardState:
     def _record_action(self, town: config.TownConfig, action: str, detail: dict[str, Any]) -> None:
         self.log.event(town.name, "cockpit_action", None, {"action": action, **detail})
 
+    def _mail_beads(self, town: config.TownConfig) -> list[dict[str, Any]] | None:
+        """Every message in a city, read or not, from the bead store (the supervisor lists unread mail only)."""
+        cached = self._mail_cache.get(town.name)
+        if cached and time.time() - cached[0] < 5:
+            return cached[1]
+        gc = os.environ.get("PT_GC_BIN") or shutil.which("gc") or str(Path.home() / ".local/bin/gc")
+        env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
+        try:
+            result = self.runner([gc, "bd", "list", "--city", str(town.city_root), "--type", "message", "--json", "--all", "--limit", "300"],
+                                 capture_output=True, text=True, timeout=30, env=env, check=False)
+            data = json.loads(result.stdout) if result.returncode == 0 else None
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            data = None
+        items = data if isinstance(data, list) else (data.get("issues") if isinstance(data, dict) else None)
+        if not isinstance(items, list):
+            return None
+        messages = []
+        for item in items:
+            if not isinstance(item, dict) or item.get("issue_type") not in (None, "message"):
+                continue
+            metadata = item.get("metadata") or {}
+            labels = item.get("labels") or []
+            messages.append({
+                "id": item.get("id"), "subject": item.get("title"), "body": item.get("description"),
+                "from": metadata.get("mail.from_display") or item.get("sender"), "to": item.get("assignee"),
+                "created_at": item.get("created_at"), "read": "read" in labels or metadata.get("mail.read") == "true",
+                "thread_id": next((label.split(":", 1)[1] for label in labels if isinstance(label, str) and label.startswith("thread:")), None),
+                "archived": item.get("status") == "closed",
+            })
+        messages.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        self._mail_cache[town.name] = (time.time(), messages)
+        return messages
+
     def mail_list(self, town_name: Any) -> dict[str, Any]:
         town = self._town(town_name)
+        messages = self._mail_beads(town)
+        if messages is not None:
+            return {"town": town.name, "messages": messages[:200], "source": "beads", "error": None}
         data = self.supervisor(f"/v0/city/{town.name}/mail?status=all", timeout=4)
         items = data.get("items") if isinstance(data, dict) else None
         messages = sorted(items or [], key=lambda item: str(item.get("created_at") or ""), reverse=True)[:200]
-        return {"town": town.name, "messages": messages, "error": data.get("error") if isinstance(data, dict) and items is None else None}
+        return {"town": town.name, "messages": messages, "source": "supervisor",
+                "error": data.get("error") if isinstance(data, dict) and items is None else None}
 
     def act(self, action: str, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
         town = self._town(payload.get("town"))
+        self._mail_cache.pop(town.name, None)
         if action == "mail/send":
             to = _name(payload.get("to"), "to")
             subject = _text(payload.get("subject"), "subject", 200)
