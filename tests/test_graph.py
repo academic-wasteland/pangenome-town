@@ -21,7 +21,9 @@ def test_region_parse():
 def test_summary_and_haplotypes_on_toy_graph(towns, tmp_path):
     tools = graph.GraphTools(towns["ubar"])
     summary = tools.run("summary", None, tmp_path / "s")
-    assert summary["served_samples"] == {"ksa001": 2, "ksa002": 1}
+    assert summary["served_samples_path_fragments"] == {"ksa001": 2, "ksa002": 1}
+    assert summary["graph"].get("nodes") == 5 and summary["cached"] is False
+    assert tools.summary()["cached"] is True
     assert summary["provenance"]["commands"][0]["argv"][1] == "stats"
     region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
     haplotypes = tools.run("haplotypes", region, tmp_path / "h")

@@ -131,7 +131,7 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         for key in ("table", "gfa"):
             if result.get(key):
                 attachments.append(Attachment.from_file(Path(result[key])))
-        summary_keys = ("variant_count", "by_type", "samples_present", "samples_absent", "segments", "paths_total", "served_samples")
+        summary_keys = ("variant_count", "by_type", "per_sample_alt_sites", "distinct_threads", "haplotypes_traced", "town_samples_with_alt_in_region", "segments", "paths_total", "graph", "served_samples_path_fragments")
         body = {
             "text": arguments.text,
             "region": str(region) if region else None,

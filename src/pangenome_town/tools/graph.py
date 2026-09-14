@@ -144,30 +144,46 @@ class GraphTools:
             raise QueryError(f"VCF not present at {self.town.vcf}")
         return self.town.vcf  # type: ignore[return-value]
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Whole-graph statistics. Slow on a full human pangenome (minutes), so cached per graph fingerprint."""
         graph = self._require_graph()
+        cache_path = self.town.state_dir / "summary.json"
+        fingerprint = _fingerprint(graph)
+        if not refresh and cache_path.exists():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                if cached.get("provenance", {}).get("inputs", {}).get("graph") == fingerprint and cached.get("samples") == list(self.town.samples):
+                    cached["cached"] = True
+                    return cached
+            except (OSError, json.JSONDecodeError):
+                pass
         prov = Provenance(self.town, "summary", None)
         vg = _which("vg")
-        stats = prov.run([vg, "stats", "-l", "-z", str(graph)]).stdout.decode()
+        stats = prov.run([vg, "stats", "-l", "-z", str(graph)], timeout=3600).stdout.decode()
         numbers: dict[str, int] = {}
         for line in stats.splitlines():
-            parts = line.split(":")
+            parts = re.split(r"[\t:]\s*", line.strip(), maxsplit=1)
             if len(parts) == 2 and parts[1].strip().isdigit():
                 numbers[parts[0].strip()] = int(parts[1].strip())
-        paths = prov.run([vg, "paths", "-x", str(graph), "-L"]).stdout.decode().splitlines()
+        paths = prov.run([vg, "paths", "-x", str(graph), "-L"], timeout=3600).stdout.decode().splitlines()
         per_sample: dict[str, int] = {}
         for name in paths:
             per_sample[_sample_of(name)] = per_sample.get(_sample_of(name), 0) + 1
         served = {sample: per_sample.get(sample, 0) for sample in self.town.samples}
-        return {
+        result = {
             "kind": "summary",
             "graph": numbers,
             "paths_total": len(paths),
-            "path_names_by_sample_total": len(per_sample),
-            "served_samples": served,
+            "samples_in_graph": len(per_sample),
+            "samples": list(self.town.samples),
+            "served_samples_path_fragments": served,
             "reference_paths": [name for name in paths if _sample_of(name) in self.town.reference_paths][:200],
+            "cached": False,
             "provenance": prov.finish(),
         }
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return result
 
     def _chunk(self, prov: Provenance, region: Region, out_dir: Path, *, trace: bool = False) -> tuple[Path, Path | None]:
         """Extract the region subgraph; with trace=True also collect haplotype thread frequencies."""
