@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Academic Wasteland towns</title>
+<title>Academic Wasteland cockpit</title>
 <style>
 :root{--bg:#f6f4ee;--fg:#1d1c19;--muted:#6d6a60;--line:#d9d4c7;--card:#fffdf8;--accent:#8a5a19;--ok:#2f7d4a;--warn:#b7791f;--bad:#b3261e;--lane-a:#e9eef7;--lane-b:#f3ebe0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#ecebe6;--muted:#9a978f;--line:#33363d;--card:#1d1f25;--accent:#d9a75b;--ok:#6ccb8a;--warn:#e2b45a;--bad:#f28b82;--lane-a:#1f2634;--lane-b:#2c241a}}
@@ -36,40 +36,120 @@ a{color:var(--accent)}
 .refusal.rejected{border-color:var(--bad)}
 .tag-controlled{border-color:var(--bad);color:var(--bad)}
 .scroll{overflow-x:auto}
-@media (max-width:700px){.lanes{grid-template-columns:1fr}}
+.lanes{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+nav.jump{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 10px}nav.jump a{border:1px solid var(--line);border-radius:999px;padding:1px 10px;text-decoration:none;background:var(--card);font-size:13px}
+.monitor{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:10px}
+@media (max-width:900px){.monitor{grid-template-columns:1fr}}
+svg.net,svg.timeline{width:100%;height:auto;display:block;background:var(--card);border:1px solid var(--line);border-radius:8px}
+svg text{fill:var(--fg);font:12px system-ui,sans-serif}svg .sub{fill:var(--muted);font-size:10px}
+.node circle.body{fill:var(--card);stroke:var(--accent);stroke-width:2}.node.authority circle.body{stroke:var(--bad)}.node.human circle.body{stroke:var(--ok)}.node.commons circle.body{stroke:var(--muted);stroke-dasharray:4 3}
+.edge{stroke:var(--line);fill:none}.edge.ok{stroke:var(--ok)}.edge.warn{stroke:var(--warn)}.edge.bad{stroke:var(--bad)}
+.pulse{fill:none;stroke:var(--accent);stroke-width:2;opacity:0}
+.dot.ok{fill:var(--ok)}.dot.warn{fill:var(--warn)}.dot.bad{fill:var(--bad)}.dot.muted{fill:var(--muted)}
+.mark{cursor:pointer}.mark.ok{fill:var(--ok)}.mark.warn{fill:var(--warn)}.mark.bad{fill:var(--bad)}.mark.muted{fill:var(--muted)}.mark.info{fill:var(--accent)}
+.axis{stroke:var(--line)}.bar{fill:var(--accent);opacity:.75}.bar.ok{fill:var(--ok)}.bar.warn{fill:var(--warn)}.bar.bad{fill:var(--bad)}
+.btn{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px;padding:2px 8px;cursor:pointer}.btn:hover{border-color:var(--accent)}.btn.on{border-color:var(--accent);color:var(--accent)}
+input,textarea,select{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;max-width:100%}
+textarea{width:100%;min-height:70px}
+.form{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 8px;align-items:center}
+.mail-list .item{border-bottom:1px solid var(--line);padding:5px 4px;cursor:pointer}.mail-list .item:hover{background:var(--bg)}.mail-list .item.unread .subj{font-weight:600}
+.mail-list{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.toast{position:fixed;right:16px;bottom:16px;max-width:min(420px,calc(100vw - 32px));background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.15)}
+.copy{cursor:pointer}
+@media (max-width:700px){.lanes{grid-template-columns:1fr}.form{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
-  <h1>The Academic Wasteland: towns</h1>
+  <h1>The Academic Wasteland: cockpit</h1>
   <span class="muted" id="clock"></span>
   <span class="muted">live <span id="live" class="warn">connecting</span></span>
   <a href="http://127.0.0.1:8372/" target="_blank" rel="noopener">gc dashboard</a>
+  <a href="__AGENTSVIEW_URL__/" target="_blank" rel="noopener">AgentsView</a>
 </header>
+<nav class="jump"><a href="#monitor">Live monitor</a><a href="#mail">Mail</a><a href="#residents">Residents</a><a href="#towns-sec">Towns</a><a href="#exchanges">Exchanges</a><a href="#decisions">Decisions</a><a href="#authority-sec">Authority</a><a href="#trust">Trust</a><a href="#sites-sec">Sites</a><a href="#ledger-sec">Ledger</a><a href="#agentsview">AgentsView</a><a href="#interfaces">Interfaces</a></nav>
 
-<section>
+<section id="monitor">
+  <h2>Live monitor <span class="muted" id="mon-summary"></span></h2>
+  <div class="monitor">
+    <div><svg class="net" id="net" viewBox="0 0 800 470" role="img" aria-label="Towns, the human operator, the commons and compute sites, with recent traffic"></svg></div>
+    <div class="card"><div class="k muted">RCP tasks in window, by gate</div><svg class="timeline" id="funnel" viewBox="0 0 400 230" role="img" aria-label="Gate funnel"></svg>
+      <div id="refusals" class="muted" style="margin-top:6px;font-size:12px"></div></div>
+  </div>
+  <div style="margin:8px 0 4px">window: <span id="win-btns"></span> <span class="muted">· click a marker to open the exchange · circles are RCP tasks, squares envelopes, diamonds authority and operator events</span></div>
+  <svg class="timeline" id="timeline" viewBox="0 0 1000 260" role="img" aria-label="Timeline of exchanges by town"></svg>
+</section>
+
+<section id="mail">
+  <h2>Mail <span class="muted">(your gc inbox in each city: send, read, reply)</span></h2>
+  <div class="row">
+    <div>
+      <div style="margin-bottom:6px"><span id="mail-towns"></span> <label class="muted"><input type="checkbox" id="mail-unread-only"> unread only</label></div>
+      <div class="mail-list" id="mail-list"></div>
+    </div>
+    <div>
+      <div class="card" id="mail-view"><span class="muted">select a message</span></div>
+      <h2>Compose</h2>
+      <div class="card form" id="compose">
+        <label for="c-town">town</label><select id="c-town"></select>
+        <label for="c-to">to</label><div><input id="c-to" list="c-to-list" placeholder="session alias or id, rig agent, or human" style="width:100%"><datalist id="c-to-list"></datalist></div>
+        <label for="c-subject">subject</label><input id="c-subject" maxlength="200">
+        <label for="c-body">message</label><textarea id="c-body" maxlength="8000"></textarea>
+        <span></span><div><label class="muted"><input type="checkbox" id="c-notify" checked> nudge the recipient</label> <button class="btn" id="c-send">Send</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="residents">
+  <h2>Residents <span class="muted">(agents per town: model, sessions, actions)</span></h2>
+  <div id="residents-body"></div>
+  <div class="card" id="peek-view" hidden><div class="k muted" id="peek-title"></div><pre id="peek-out"></pre></div>
+</section>
+
+<section id="towns-sec">
   <h2>Towns</h2>
   <div class="towns" id="towns"></div>
 </section>
 
-<section>
+<section id="exchanges">
   <h2>Exchanges <span class="muted" id="xcount"></span></h2>
   <div class="lanes" id="lanes"></div>
 </section>
 
-<section>
+<section id="decisions">
+  <h2>Decisions waiting for you <span class="muted">(credential applications; decide on the command line)</span></h2>
+  <div id="decisions-body"></div>
+</section>
+
+<section id="ledger-sec">
   <h2>Ledger: Wasteland commons <span class="muted" id="ledger-where"></span></h2>
   <div id="ledger" class="row"></div>
 </section>
 
-<section>
+<section id="authority-sec">
   <h2>Authority: Camelot</h2>
   <div id="authority" class="row"></div>
 </section>
 
-<section>
+<section id="trust">
+  <h2>Trust <span class="muted">(anchors, controlled datasets, scope library)</span></h2>
+  <div id="trust-body" class="row"></div>
+</section>
+
+<section id="sites-sec">
   <h2>Compute sites</h2>
   <div id="sites" class="row"></div>
+</section>
+
+<section id="agentsview">
+  <h2>AgentsView <span class="muted">(agent sessions recorded in the town directories)</span></h2>
+  <div id="agentsview-body"></div>
+</section>
+
+<section id="interfaces">
+  <h2>Interfaces <span class="muted">(where everything runs)</span></h2>
+  <div id="interfaces-body" class="scroll"></div>
 </section>
 
 <section id="detail" hidden>
@@ -193,6 +273,7 @@ async function loadExchanges(){
         <div class="k">${x.rcp?'<span class="chip">RCP</span> ':''}${CONTROLLED.includes(short(x.envelope.body.rcp_task_type))?'<span class="chip tag-controlled">controlled</span> ':''}${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
         <div class="t">${esc((x.envelope.body.text||"").slice(0,220))}</div>
         ${x.envelope.body.region?`<div class="mono muted">${esc(x.envelope.body.region)}</div>`:""}
+        ${x.rcp && x.rcp.gates ? `<div style="margin-top:3px">${gateChips(x.rcp.gates)}${x.rcp.refusal && x.rcp.refusal.reason ? ` <span class="chip ${x.rcp.state==="rejected"||x.rcp.state==="failed"?"bad":"warn"}">${esc(x.rcp.refusal.gate)}: ${esc(x.rcp.refusal.reason)}</span>` : ""}</div>` : ""}
       </div>`).join("") + `</div>`;
   }).join("");
   $("#lanes").innerHTML = html;
@@ -220,7 +301,7 @@ async function select(id){
         ${renderRcp(x.rcp)}
       </div>
       <div>
-        <h2>Agent activity in ${esc(x.to)}</h2>${activity}
+        <h2>Agent activity in ${esc(x.to)}</h2>${(x.agentsview||[]).length ? `<div style="margin-bottom:6px">Open in AgentsView: ${x.agentsview.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.agent)} ${esc(fmtTs(a.started_at))}</a>`).join(" · ")}</div>` : ""}${activity}
         <h2>Raw envelope</h2><pre>${esc(JSON.stringify(x.envelope,null,1))}</pre>
       </div>
     </div>`;
@@ -247,12 +328,244 @@ function connect(){
   const es = new EventSource("/api/events/stream?after=" + lastSeq);
   es.onopen = () => { $("#live").textContent = "on"; $("#live").className = "ok"; };
   es.onerror = () => { $("#live").textContent = "reconnecting"; $("#live").className = "warn"; };
-  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); if (String(ev.kind).startsWith("rcp_") || ["application_received","credential_issued","credential_revoked","application_denied"].includes(ev.kind)) { loadAuthority(); loadSites(); loadTowns(); } });
+  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); if (String(ev.kind).startsWith("rcp_") || ["application_received","credential_issued","credential_revoked","application_denied"].includes(ev.kind)) { loadAuthority(); loadSites(); loadTowns(); loadDecisions(); } if (ev.kind === "cockpit_action") { loadMail(); loadResidents(); } loadMonitor(); });
 }
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
 setInterval(loadTowns, 30000);
 loadTowns().then(loadExchanges).then(loadLedger).then(loadAuthority).then(loadSites).then(connect);
+initCockpit();
 setInterval(loadLedger, 60000);
+</script>
+
+<script>
+/* Cockpit: live monitor, mail, residents, decisions, trust, AgentsView, interfaces. */
+const TOKEN = "__COCKPIT_TOKEN__";
+const WINDOWS = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800};
+let winKey = "6h", mailTown = null, mailCache = [], seenMonitor = new Set(), monitorData = null, firstMonitor = true;
+const toSec = (t) => typeof t === "number" ? t : (t ? Date.parse(t) / 1000 : 0);
+const outcome = (m) => m.rcp ? ({completed:"ok", working:"warn", "input-required":"warn", submitted:"warn", rejected:"bad", failed:"bad", canceled:"muted"}[m.state] || "muted") : ({answered:"ok", delivered:"ok", sent:"ok", failed:"bad", delivery_failed:"bad"}[m.status] || "muted");
+
+function toast(text, bad){ const el = document.createElement("div"); el.className = "toast"; el.innerHTML = `<span class="${bad?"bad":"ok"}">${esc(text)}</span>`; document.body.appendChild(el); setTimeout(() => el.remove(), 6000); }
+async function post(action, body){
+  const r = await fetch("/api/" + action, {method: "POST", headers: {"Content-Type": "application/json", "X-Cockpit-Token": TOKEN}, body: JSON.stringify(body)});
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  if (!r.ok || j.ok === false) { toast(`${action} failed: ${j.error || j.stderr || j.stdout || r.status}`, true); return null; }
+  toast(`${action} ok`); return j;
+}
+function copyText(text){ navigator.clipboard && navigator.clipboard.writeText(text).then(() => toast("copied")); }
+
+/* ---------- live monitor ---------- */
+function layout(nodes){
+  const pos = {human: {x: 400, y: 48, label: "you (operator)", kind: "human"}, commons: {x: 560, y: 405, label: "Commons ledger", kind: "commons"}};
+  const pangenome = nodes.filter(n => n.kind === "pangenome"), authority = nodes.filter(n => n.kind === "authority");
+  pangenome.forEach((n, i) => { pos[n.id] = {x: pangenome.length === 1 ? 150 : 130 + i * (540 / (pangenome.length - 1)), y: 245, label: n.display, kind: "pangenome"}; });
+  authority.forEach((n, i) => { pos[n.id] = {x: 240 + (i - (authority.length - 1) / 2) * 160, y: 405, label: n.display, kind: "authority"}; });
+  return pos;
+}
+function edgeOf(m){ const from = m.from === "external" ? "human" : m.from; return [from, m.to]; }
+function eventEdge(e){
+  if (e.kind === "application_received") return ["human", e.town, "info"];
+  if (e.kind === "credential_issued") return [e.town, "human", "ok"];
+  if (e.kind === "credential_revoked" || e.kind === "application_denied") return [e.town, "human", "bad"];
+  if (e.kind === "rcp_stamped") return [e.town, "commons", "ok"];
+  if (e.kind === "cockpit_action") return ["human", e.town, (e.detail||{}).ok === false ? "bad" : "info"];
+  return null;
+}
+function curve(a, b, bend){ const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1; return {x: mx - dy / len * bend, y: my + dx / len * bend}; }
+function renderNet(data){
+  const svg = $("#net"), now = data.now, span = WINDOWS[winKey];
+  const pos = layout(data.nodes);
+  const agg = {};
+  const add = (from, to, cls) => { if (!pos[from] || !pos[to] || from === to) return; const k = from + ">" + to; agg[k] = agg[k] || {from, to, n: 0, cls: "muted"}; agg[k].n++; agg[k].cls = cls; };
+  data.messages.filter(m => now - toSec(m.created) <= span).slice().reverse().forEach(m => { const [f, t] = edgeOf(m); add(f, t, outcome(m)); });
+  data.events.filter(e => now - toSec(e.ts) <= span).forEach(e => { const ed = eventEdge(e); if (ed) add(ed[0], ed[1], ed[2] === "info" ? "warn" : ed[2]); });
+  let html = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>`;
+  Object.values(agg).forEach(e => { const a = pos[e.from], b = pos[e.to], c = curve(a, b, 26); html += `<path class="edge ${e.cls}" id="e-${esc(e.from)}-${esc(e.to)}" d="M${a.x},${a.y} Q${c.x},${c.y} ${b.x},${b.y}" stroke-width="${Math.min(1.5 + Math.log2(e.n + 1) * 1.6, 9)}"><title>${esc(e.from)} to ${esc(e.to)}: ${e.n} in window</title></path>`; });
+  (data.sites || []).forEach((s, i) => {
+    const t = pos[s.town]; if (!t) return;
+    const same = data.sites.filter(x => x.town === s.town), j = same.indexOf(s);
+    const sx = t.x + (j - (same.length - 1) / 2) * 70, sy = t.y + 95;
+    html += `<line class="edge" x1="${t.x}" y1="${t.y + 30}" x2="${sx}" y2="${sy - 12}" stroke-dasharray="3 3"/><g><rect x="${sx - 32}" y="${sy - 12}" width="64" height="22" rx="5" fill="var(--card)" stroke="${s.reachable ? "var(--ok)" : "var(--muted)"}"/><text x="${sx}" y="${sy + 3}" text-anchor="middle" class="sub">${esc(s.site)}${s.reachable ? "" : " (off)"}</text></g>`;
+  });
+  Object.entries(pos).forEach(([id, p]) => {
+    const town = (towns || []).find(t => t.name === id);
+    const pending = town && town.authority ? town.authority.pending_applications : 0;
+    const sessions = town ? (town.sessions || []).length : 0;
+    html += `<g class="node ${p.kind}" id="n-${esc(id)}"><circle class="pulse" cx="${p.x}" cy="${p.y}" r="30"/><circle class="body" cx="${p.x}" cy="${p.y}" r="28"/><text x="${p.x}" y="${p.y + 4}" text-anchor="middle">${esc(p.label.split(" ")[0])}</text>
+      <text x="${p.x}" y="${p.y + 44}" text-anchor="middle" class="sub">${esc(p.kind === "pangenome" ? `${sessions} session${sessions === 1 ? "" : "s"}` : p.kind === "authority" ? `${pending || 0} pending` : "")}</text></g>`;
+  });
+  svg.innerHTML = html;
+  return pos;
+}
+function pulse(id){ const el = document.querySelector(`#n-${CSS.escape(id)} .pulse`); if (!el) return; el.animate([{opacity: .9, r: 28}, {opacity: 0, r: 52}], {duration: 1200, easing: "ease-out"}); }
+function fly(pos, from, to, cls){
+  const a = pos[from], b = pos[to]; if (!a || !b || from === to) return;
+  const svg = $("#net"), c = curve(a, b, 26), dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  dot.setAttribute("r", "7"); dot.setAttribute("class", "dot " + cls); svg.appendChild(dot); pulse(from);
+  const t0 = performance.now(), dur = 1400;
+  const step = (t) => { const u = Math.min((t - t0) / dur, 1), v = 1 - u; const x = v * v * a.x + 2 * v * u * c.x + u * u * b.x, y = v * v * a.y + 2 * v * u * c.y + u * u * b.y; dot.setAttribute("cx", x); dot.setAttribute("cy", y); if (u < 1) requestAnimationFrame(step); else { dot.remove(); pulse(to); } };
+  requestAnimationFrame(step);
+}
+function renderTimeline(data){
+  const svg = $("#timeline"), now = data.now, span = WINDOWS[winKey], x0 = 110, x1 = 985;
+  const rows = [...data.nodes.map(n => n.id), "commons"];
+  const h = 34 * rows.length + 40; svg.setAttribute("viewBox", `0 0 1000 ${h}`);
+  const X = (t) => x0 + (x1 - x0) * (1 - (now - t) / span), Y = (r) => 26 + 34 * rows.indexOf(r);
+  let html = "";
+  rows.forEach(r => { html += `<line class="axis" x1="${x0}" x2="${x1}" y1="${Y(r)}" y2="${Y(r)}"/><text x="8" y="${Y(r) + 4}">${esc((data.nodes.find(n => n.id === r) || {display: r}).display)}</text>`; });
+  for (let k = 0; k <= 6; k++) { const t = now - span * k / 6; html += `<line class="axis" x1="${X(t)}" x2="${X(t)}" y1="12" y2="${h - 20}" stroke-dasharray="2 4"/><text class="sub" x="${X(t)}" y="${h - 6}" text-anchor="middle">${esc(new Date(t * 1000).toLocaleString([], span > 86400 ? {month: "short", day: "numeric", hour: "2-digit"} : {hour: "2-digit", minute: "2-digit"}))}</text>`; }
+  data.messages.forEach(m => {
+    const t = toSec(m.created); if (now - t > span || !rows.includes(m.to)) return;
+    const cls = outcome(m), x = X(t), y = Y(m.to);
+    const title = `${m.from} to ${m.to} · ${m.rcp ? `RCP ${m.task || ""} ${m.state}` : m.kind + " " + m.status}${m.refusal_gate ? ` · ${m.refusal_gate}: ${m.refusal_reason}` : ""}${m.region ? " · " + m.region : ""}\n${m.text}`;
+    html += m.rcp ? `<circle class="mark ${cls}" data-id="${esc(m.id)}" cx="${x}" cy="${y}" r="${CONTROLLED.includes(m.task) ? 8 : 6}" ${CONTROLLED.includes(m.task) ? 'stroke="var(--bad)" stroke-width="2"' : ""}><title>${esc(title)}</title></circle>`
+                  : `<rect class="mark ${cls}" data-id="${esc(m.id)}" x="${x - 4}" y="${y - 4}" width="8" height="8"><title>${esc(title)}</title></rect>`;
+  });
+  data.events.forEach(e => {
+    const t = toSec(e.ts); if (now - t > span) return;
+    const row = e.kind === "rcp_stamped" ? "commons" : e.town; if (!rows.includes(row)) return;
+    const ed = eventEdge(e), cls = ed ? ed[2] : "muted", x = X(t), y = Y(row);
+    html += `<path class="mark ${cls}" d="M${x},${y - 7} L${x + 7},${y} L${x},${y + 7} L${x - 7},${y} z"><title>${esc(e.kind.replaceAll("_", " "))} · ${esc(e.town)} · ${esc(JSON.stringify(e.detail || {}).slice(0, 200))}</title></path>`;
+  });
+  svg.innerHTML = html;
+  svg.querySelectorAll(".mark[data-id]").forEach(el => el.addEventListener("click", () => select(el.dataset.id)));
+}
+function renderFunnel(data){
+  const now = data.now, span = WINDOWS[winKey];
+  const all = data.messages.filter(m => m.rcp && now - toSec(m.created) <= span), tasks = all.filter(m => m.gates);
+  const count = (gate, value) => tasks.filter(m => m.gates && m.gates[gate] === value).length;
+  const bars = [["submitted", tasks.length, ""], ...GATES.map(g => [g, count(g, "pass"), "ok", count(g, "pending"), count(g, "fail")]), ["completed", tasks.filter(m => m.state === "completed").length, "ok"]];
+  const max = Math.max(1, tasks.length), W = 250;
+  let html = "";
+  bars.forEach((b, i) => {
+    const y = 14 + i * 34, [label, pass, cls, pending = 0, fail = 0] = b, wp = W * pass / max, ww = W * pending / max, wf = W * fail / max;
+    html += `<text x="0" y="${y + 13}">${esc(label)}</text><rect class="bar ${cls}" x="110" y="${y}" width="${wp}" height="18"><title>${pass} passed</title></rect>`;
+    if (pending) html += `<rect class="bar warn" x="${110 + wp}" y="${y}" width="${ww}" height="18"><title>${pending} waiting</title></rect>`;
+    if (fail) html += `<rect class="bar bad" x="${110 + wp + ww}" y="${y}" width="${wf}" height="18"><title>${fail} refused</title></rect>`;
+    html += `<text class="sub" x="${116 + wp + ww + wf}" y="${y + 13}">${pass}${pending ? ` · ${pending} waiting` : ""}${fail ? ` · ${fail} refused` : ""}</text>`;
+  });
+  $("#funnel").innerHTML = html;
+  const reasons = {}; tasks.filter(m => m.refusal_gate).forEach(m => { const k = `${m.refusal_gate}: ${m.refusal_reason}`; reasons[k] = (reasons[k] || 0) + 1; });
+  const older = all.length - tasks.length;
+  $("#refusals").innerHTML = (older ? `<div>${older} older task${older === 1 ? "" : "s"} from before the gate records are not counted</div>` : "") + (Object.keys(reasons).length ? "refusals: " + Object.entries(reasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${esc(k)} ×${v}</span>`).join("") : "no refusals in window");
+  $("#mon-summary").textContent = `(${tasks.length} RCP tasks, ${data.messages.filter(m => now - toSec(m.created) <= span).length} messages in the last ${winKey})`;
+}
+async function loadMonitor(){
+  const data = await (await fetch("/api/monitor")).json(); monitorData = data;
+  const pos = renderNet(data); renderTimeline(data); renderFunnel(data);
+  const fresh = [];
+  data.messages.forEach(m => { const k = "m" + m.id + (m.state || m.status); if (!seenMonitor.has(k)) { seenMonitor.add(k); fresh.push(() => { const [f, t] = edgeOf(m); fly(pos, f, t, outcome(m)); }); } });
+  data.events.forEach(e => { const k = "e" + e.seq; if (!seenMonitor.has(k)) { seenMonitor.add(k); const ed = eventEdge(e); if (ed) fresh.push(() => fly(pos, ed[0], ed[1], ed[2] === "info" ? "warn" : ed[2])); } });
+  if (!firstMonitor) fresh.slice(-12).forEach((f, i) => setTimeout(f, i * 350));
+  firstMonitor = false;
+}
+
+/* ---------- mail ---------- */
+async function loadMail(){
+  if (!mailTown) mailTown = (towns[0] || {}).name;
+  $("#mail-towns").innerHTML = towns.map(t => `<button class="btn ${t.name === mailTown ? "on" : ""}" data-town="${esc(t.name)}">${esc(t.display)}</button>`).join(" ");
+  $("#mail-towns").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { mailTown = b.dataset.town; loadMail(); }));
+  const j = await (await fetch("/api/mail?town=" + encodeURIComponent(mailTown))).json();
+  mailCache = j.messages || [];
+  const only = $("#mail-unread-only").checked;
+  $("#mail-list").innerHTML = (j.error ? `<div class="bad" style="padding:6px">${esc(j.error)}</div>` : "") + (mailCache.filter(m => !only || !m.read).map(m => `<div class="item ${m.read ? "" : "unread"}" data-id="${esc(m.id)}"><div class="k muted">${esc(m.from)} → ${esc(m.to)} · ${esc(fmtTs(m.created_at))} ${m.read ? "" : '<span class="chip warn">unread</span>'}</div><div class="subj">${esc(m.subject || "(no subject)")}</div></div>`).join("") || '<div class="muted" style="padding:6px">no mail</div>');
+  $("#mail-list").querySelectorAll(".item").forEach(el => el.addEventListener("click", () => showMail(el.dataset.id)));
+}
+function showMail(id){
+  const m = mailCache.find(x => x.id === id); if (!m) return;
+  $("#mail-view").innerHTML = `<div class="k muted">${esc(m.from)} → ${esc(m.to)} · ${esc(m.created_at)} · <span class="mono">${esc(m.id)}</span> · thread <span class="mono">${esc(m.thread_id || "")}</span></div>
+    <div style="margin:4px 0"><strong>${esc(m.subject || "")}</strong></div><pre style="white-space:pre-wrap">${esc(m.body || "")}</pre>
+    <div class="form"><label for="r-body">reply</label><textarea id="r-body" maxlength="8000"></textarea><span></span>
+    <div><button class="btn" id="r-send">Reply</button> <button class="btn" id="r-mark">${m.read ? "Mark unread" : "Mark read"}</button></div></div>`;
+  $("#r-send").addEventListener("click", async () => { const body = $("#r-body").value; if (await post("mail/reply", {town: mailTown, id: m.id, body})) loadMail(); });
+  $("#r-mark").addEventListener("click", async () => { if (await post("mail/mark", {town: mailTown, id: m.id, unread: m.read})) loadMail(); });
+}
+function initCompose(){
+  $("#c-town").innerHTML = towns.map(t => `<option value="${esc(t.name)}">${esc(t.display)}</option>`).join("");
+  $("#c-send").addEventListener("click", async () => {
+    const body = {town: $("#c-town").value, to: $("#c-to").value.trim(), subject: $("#c-subject").value, body: $("#c-body").value, notify: $("#c-notify").checked};
+    if (await post("mail/send", body)) { $("#c-body").value = ""; mailTown = body.town; loadMail(); }
+  });
+  $("#c-town").addEventListener("change", fillRecipients);
+  $("#mail-unread-only").addEventListener("change", loadMail);
+}
+
+/* ---------- residents ---------- */
+let residentsData = null;
+function fillRecipients(){
+  const town = $("#c-town").value, t = (residentsData || {towns: []}).towns.find(x => x.town === town);
+  const town_cfg = towns.find(x => x.name === town) || {};
+  const opts = new Set(["human"]);
+  (t ? t.residents : []).forEach(r => (r.sessions || []).forEach(s => { if (s.alias) opts.add(s.alias); opts.add(s.id); }));
+  (t ? t.residents : []).filter(r => r.name.includes(".")).forEach(r => opts.add(`${town}-rig/${r.name}`));
+  $("#c-to-list").innerHTML = [...opts].map(o => `<option value="${esc(o)}">`).join("");
+}
+async function loadResidents(){
+  residentsData = await (await fetch("/api/residents")).json();
+  const av = await (await fetch("/api/agentsview")).json().catch(() => ({sessions: []}));
+  $("#residents-body").innerHTML = residentsData.towns.map(t => `<div class="card" style="margin-bottom:8px"><div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.kind)} town</span>${t.error ? ` <span class="bad">${esc(t.error)}</span>` : ""}</div>
+    <div class="scroll"><table><tr><th>resident</th><th>role</th><th>model</th><th>sessions</th><th>actions</th></tr>
+    ${t.residents.map(r => `<tr><td><strong>${esc(r.short)}</strong><div class="muted mono">${esc(r.name)}</div></td><td title="${esc(r.description)}">${esc(r.title)}</td><td>${esc(r.model || "")}</td>
+      <td>${(r.sessions || []).map(s => `<span class="chip ${s.state === "active" ? "ok" : s.state === "asleep" ? "" : "warn"}">${esc(s.alias || s.id)} · ${esc(s.state)}</span>`).join("") || '<span class="muted">none</span>'}</td>
+      <td>${r.name.includes(".") ? '<span class="muted">rig agent: mail it or sling work</span>' : `<button class="btn" data-act="new" data-town="${esc(t.town)}" data-template="${esc(r.short)}">new session</button>`}
+        ${(r.sessions || []).map(s => `<div style="margin-top:3px"><span class="mono">${esc(s.alias || s.id)}</span>
+          <button class="btn" data-act="wake" data-town="${esc(t.town)}" data-session="${esc(s.id)}">wake</button>
+          <button class="btn" data-act="peek" data-town="${esc(t.town)}" data-session="${esc(s.id)}">peek</button>
+          <button class="btn" data-act="nudge" data-town="${esc(t.town)}" data-session="${esc(s.id)}">nudge</button>
+          <button class="btn" data-act="mail" data-town="${esc(t.town)}" data-session="${esc(s.alias || s.id)}">mail</button></div>`).join("")}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">no residents</td></tr>'}</table></div>
+    ${(av.sessions || []).filter(s => s.town === t.town).length ? `<div class="muted" style="margin-top:4px">recent sessions in AgentsView: ${(av.sessions || []).filter(s => s.town === t.town).slice(0, 4).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(fmtTs(s.started_at))} ${esc((s.first_message || "").slice(0, 40))}</a>`).join(" · ")}</div>` : ""}</div>`).join("");
+  $("#residents-body").querySelectorAll("button[data-act]").forEach(b => b.addEventListener("click", () => residentAction(b.dataset)));
+  fillRecipients();
+}
+async function residentAction(d){
+  if (d.act === "new") { const alias = prompt ? null : null; if (await post("sessions/new", {town: d.town, template: d.template})) setTimeout(loadResidents, 1500); }
+  else if (d.act === "wake") { if (await post("sessions/wake", {town: d.town, session: d.session})) setTimeout(loadResidents, 1500); }
+  else if (d.act === "peek") { const j = await (await fetch(`/api/sessions/peek?town=${encodeURIComponent(d.town)}&session=${encodeURIComponent(d.session)}&lines=120`)).json(); $("#peek-view").hidden = false; $("#peek-title").textContent = `peek ${d.town} / ${d.session}`; $("#peek-out").textContent = j.stdout || j.stderr || j.error || "(no output)"; }
+  else if (d.act === "nudge") { const box = document.createElement("div"); box.className = "card"; box.innerHTML = `<div class="form"><label>nudge ${esc(d.session)}</label><input style="width:100%" maxlength="4000" placeholder="text sent into the session"><span></span><div><button class="btn">Send nudge</button></div></div>`; $("#peek-view").hidden = false; $("#peek-title").textContent = ""; $("#peek-out").textContent = ""; $("#peek-view").prepend(box); box.querySelector("button").addEventListener("click", async () => { if (await post("sessions/nudge", {town: d.town, session: d.session, message: box.querySelector("input").value})) box.remove(); }); }
+  else if (d.act === "mail") { $("#c-town").value = d.town; fillRecipients(); $("#c-to").value = d.session; location.hash = "#mail"; $("#c-subject").focus(); }
+}
+
+/* ---------- decisions, trust, AgentsView, interfaces ---------- */
+async function loadDecisions(){
+  const j = await (await fetch("/api/decisions")).json();
+  const cards = j.authorities.flatMap(a => (a.pending || []).map(p => `<div class="card" style="margin-bottom:8px">
+    <div><strong>${esc(p.credential_type)}</strong> for <span class="mono">${esc(short(p.holder))}</span> from <strong>${esc(p.issuer)}</strong> <span class="muted mono">${esc(p.id)} · ${esc(p.created)}</span></div>
+    <div class="muted" style="margin-top:2px">${Object.entries(p.subject_fields || {}).map(([k, v]) => `${esc(k)}: ${esc(short(v))}`).join(" · ")}</div>
+    <div style="margin-top:4px">${esc(p.purpose)}</div>
+    ${(p.recommendations || []).map(r => `<div class="refusal" style="border-color:var(${r.verdict === "approve" ? "--ok" : r.verdict === "deny" ? "--bad" : "--warn"})"><div class="k"><strong>${esc(r.from)}</strong> recommends <span class="status ${r.verdict === "approve" ? "ok" : r.verdict === "deny" ? "bad" : "warn"}">${esc(r.verdict)}</span> <span class="muted">${esc(r.created_at || "")}</span></div><pre style="white-space:pre-wrap;max-height:180px">${esc(r.body)}</pre></div>`).join("") || '<div class="muted" style="margin-top:4px">no resident recommendation yet: mail irb or dac in Camelot from the Residents panel</div>'}
+    <div style="margin-top:6px">${["approve", "deny"].map(k => `<div><span class="muted">${k}:</span> <code class="copy" title="click to copy">${esc(p.commands[k])}</code></div>`).join("")}</div></div>`));
+  const ev = (j.events || []).slice(0, 12).map(e => `<li><span class="mono muted">${esc(fmtTs(e.ts))}</span> <strong>${esc(e.town)}</strong> ${esc(e.kind.replaceAll("_", " "))} <span class="muted mono">${esc(JSON.stringify(e.detail || {}).slice(0, 140))}</span></li>`).join("");
+  $("#decisions-body").innerHTML = (cards.join("") || '<div class="muted">nothing waiting</div>') + (ev ? `<h2>Recent authority events</h2><ul class="tl">${ev}</ul>` : "");
+  $("#decisions-body").querySelectorAll(".copy").forEach(el => el.addEventListener("click", () => copyText(el.textContent)));
+}
+async function loadTrust(){
+  const j = await (await fetch("/api/trust")).json();
+  $("#trust-body").innerHTML = j.towns.map(t => t.error ? `<div class="bad">${esc(t.town)}: ${esc(t.error)}</div>` : `<div class="card"><div><strong>${esc(t.display)}</strong></div>
+    <div style="margin-top:4px">trust anchors: ${t.anchors.map(a => `<span class="chip ok">${esc(short(a))}</span>`).join("") || '<span class="bad">none</span>'} · revocation <span class="chip">${esc(t.revocation)}</span></div>
+    <div class="muted mono" style="margin-top:2px">registrar ${esc(t.registrar || "none")}</div>
+    <div style="margin-top:4px">controlled datasets: ${t.restricted_datasets.map(d => `<span class="chip tag-controlled" title="${esc(d.iri)}">${esc(d.key)}</span>`).join("") || '<span class="muted">none</span>'} · requires ${t.required_credentials.map(esc).join(" + ")}</div>
+    <div class="scroll" style="margin-top:4px"><table><tr><th>scope</th><th>approval class</th><th>outputs released as</th></tr>${t.scopes.map(s => `<tr><td title="${esc(s.label)}">${esc(short(s.scope))}</td><td>${esc(short(s.approves))}</td><td>${esc(short(s.release))}</td></tr>`).join("")}</table></div>
+    <div class="muted" style="margin-top:4px">standing threshold ${esc(t.reputation.reputation_threshold)} from ${esc(t.reputation.reputation_min_authors)} stamper(s) · trusted: ${(t.reputation.trusted_requesters || []).map(x => esc(short(x))).join(", ") || "none"}</div></div>`).join("");
+}
+async function loadAgentsView(){
+  const j = await (await fetch("/api/agentsview")).json();
+  $("#agentsview-body").innerHTML = !j.available ? `<div class="muted">AgentsView not reachable at <a href="${esc(j.url)}">${esc(j.url)}</a></div>` :
+    `<div class="scroll"><table><tr><th>town</th><th>agent</th><th>started</th><th>messages</th><th>health</th><th>first message</th></tr>${j.sessions.slice(0, 25).map(s => `<tr><td>${esc(s.town)}</td><td>${esc(s.agent)}</td><td class="muted">${esc((s.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(s.message_count)}</td><td>${esc(s.health_grade || "")}</td><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc((s.first_message || "(open)").slice(0, 90))}</a></td></tr>`).join("") || '<tr><td colspan="6" class="muted">no town sessions indexed yet</td></tr>'}</table></div>`;
+}
+async function loadInterfaces(){
+  const j = await (await fetch("/api/interfaces")).json();
+  $("#interfaces-body").innerHTML = `<table><tr><th>interface</th><th>kind</th><th>address</th><th>status</th></tr>${j.interfaces.map(i => `<tr><td>${esc(i.name)}</td><td class="muted">${esc(i.kind)}${i.method ? " (" + esc(i.method) + ")" : ""}</td><td class="mono">${i.url && i.url.startsWith("http") && !i.method && !i.url.includes("{") ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.url)}</a>` : esc(i.url || "")}</td><td><span class="chip ${i.ok ? "ok" : "bad"}">${i.ok ? "up" : "down"}</span></td></tr>`).join("")}</table>`;
+}
+function initCockpit(){
+  $("#win-btns").innerHTML = Object.keys(WINDOWS).map(k => `<button class="btn ${k === winKey ? "on" : ""}" data-win="${k}">${k}</button>`).join(" ");
+  $("#win-btns").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { winKey = b.dataset.win; $("#win-btns").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); if (monitorData) { renderNet(monitorData); renderTimeline(monitorData); renderFunnel(monitorData); } }));
+  const ready = () => towns.length ? Promise.resolve() : new Promise(r => setTimeout(() => ready().then(r), 300));
+  ready().then(() => { initCompose(); loadMonitor(); loadMail(); loadResidents(); loadDecisions(); loadTrust(); loadAgentsView(); loadInterfaces(); });
+  setInterval(loadMonitor, 5000);
+  setInterval(() => { loadMail(); loadDecisions(); }, 20000);
+  setInterval(() => { loadResidents(); loadInterfaces(); }, 30000);
+  setInterval(loadAgentsView, 120000);
+}
 </script>
 </body>
 </html>
