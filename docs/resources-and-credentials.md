@@ -316,9 +316,10 @@ an expired credential, and a revoked credential each fail verification with a sp
 
 ## 5. Out of scope for the minimal example
 
-- Real DDBJ or Ibex execution. The ssh driver is tested against a stand-in `ssh`; enabling `ddbj`
-  needs Robert's decision on which host may run jobs and under which account (the gateway is not a
-  compute node). Ibex needs a service account; a shared personal key likely violates KAUST HPC policy.
+- DDBJ belongs to Yamatai (decision 2026-09-14): only Yamatai declares the `ddbj` site (Slurm). It stays disabled
+  until it points at an NIG interactive node, because the `gw` gateway reached by the `ddbj` alias has no Slurm
+  configuration. Ubar has no DDBJ capability and refers such work to Yamatai. Ibex needs a service account; a shared
+  personal key likely violates KAUST HPC policy.
 - `ComputeAllocation` credentials (a requester-held compute budget issued by a site operator).
 - Issuance as RCP contributions (the registrar speaks plain JSON over HTTP for now).
 - W3C Data Integrity conformance, DIDs, OIDC4VP, status lists with privacy.
