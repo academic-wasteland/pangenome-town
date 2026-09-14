@@ -333,7 +333,6 @@ function connect(){
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
 setInterval(loadTowns, 30000);
 loadTowns().then(loadExchanges).then(loadLedger).then(loadAuthority).then(loadSites).then(connect);
-initCockpit();
 setInterval(loadLedger, 60000);
 </script>
 
@@ -566,6 +565,7 @@ function initCockpit(){
   setInterval(() => { loadResidents(); loadInterfaces(); }, 30000);
   setInterval(loadAgentsView, 120000);
 }
+initCockpit();
 </script>
 </body>
 </html>
