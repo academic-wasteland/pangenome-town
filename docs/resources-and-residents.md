@@ -70,3 +70,9 @@ Use Cockpit → Mail & residents to chat locally. From another town, send:
 or use `"resident":"bloodninja"` in either town. The immediate response confirms
 delivery only; the resident's actual answer arrives separately. Keep the local
 workstation and Qwen service available for resident replies.
+
+The bridge service pins `PT_GC_BIN` to the installed Gas City executable. This is
+important because `/usr/bin/gc` can be Graphviz's unrelated graph-counting tool.
+Named-resident delivery requires a positive JSON receipt with a mail ID; a zero
+exit code alone does not count as delivery. These requests are claimed before
+the generic research dispatcher can turn them into scientific workflows.

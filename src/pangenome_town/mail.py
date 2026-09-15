@@ -74,3 +74,22 @@ def send(town: TownConfig, envelope: Envelope, *, notify: bool = True, dry_run: 
             except json.JSONDecodeError:
                 pass
     return payload
+
+
+def send_to_resident(town: TownConfig, envelope: Envelope, resident: str) -> dict[str, Any]:
+    """Deliver named-resident mail and require a real Gas City receipt (gc also names a Graphviz tool)."""
+    body = body_for(envelope)
+    if resident in {'q', 'bloodninja'}:
+        body = '\n'.join(line for line in body.splitlines() if not line.startswith('Answer with:'))
+        body += (f'\nReply with: pangenome-town send --to {envelope.sender} --reply-to {envelope.id}'
+                 ' --text "your answer"\nThe gc mail ID is only the local delivery wrapper.\n')
+    result = subprocess.run([gc_binary(), 'mail', 'send', '--city', str(town.city_root), '--from', 'human',
+                             '--to', resident, '-s', subject_for(envelope), '-m', body, '--notify', '--json'],
+                            capture_output=True, text=True, timeout=60, check=False)
+    try:
+        receipt = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        raise MailError('Gas City did not return a JSON delivery receipt; check PT_GC_BIN') from None
+    if result.returncode or not isinstance(receipt, dict) or receipt.get('ok') is not True or not receipt.get('id'):
+        raise MailError('Gas City did not confirm resident delivery')
+    return receipt
