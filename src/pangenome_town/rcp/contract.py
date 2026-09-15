@@ -17,7 +17,9 @@ from . import PG, RCP, town_iri
 
 CRED = "https://w3id.org/academic-wasteland/credentials/v0.1/"
 
-TEMPLATE = Path(__file__).resolve().parents[3] / "contract" / "pangenome.ofn.tmpl"
+TEMPLATE = Path(__file__).with_name("pangenome.ofn.tmpl")
+if not TEMPLATE.is_file():  # source/editable checkout; wheels carry the template alongside this module
+    TEMPLATE = Path(__file__).resolve().parents[3] / "contract" / "pangenome.ofn.tmpl"
 CONTRACT_VERSION = "0.1.0"
 BASIC_TASKS = ("GraphSummaryTask", "RegionExtractionTask", "HaplotypePresenceTask", "RegionVariantListingTask", "GeneLookupTask")
 LARGE_TASKS = ("ReadMappingVariantCallingTask", "WholeGraphDeconstructTask", "PopulationComparisonTask")

@@ -32,3 +32,6 @@ target-version = "py311"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"contract/pangenome.ofn.tmpl" = "pangenome_town/rcp/pangenome.ofn.tmpl"
