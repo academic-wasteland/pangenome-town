@@ -131,7 +131,8 @@ dispatch = "inline"
 [[sites]]
 name = "workstation"
 driver = "local"
-datasets = ["graph", "vcf", "ksa-individual-genotypes"]
+# These authority/release tests exercise VCF workflows, not graph operations.
+datasets = ["vcf", "ksa-individual-genotypes"]
 paths = {{ "ksa-individual-genotypes" = "{ubar.vcf}" }}
 tools = ["bcftools"]
 """, encoding="utf-8")
