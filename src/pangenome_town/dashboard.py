@@ -450,7 +450,10 @@ class DashboardState:
         return town
 
     def _gc(self, town: config.TownConfig, subcommand: list[str], flags: list[str], positionals: list[str], *, timeout: float = 60) -> dict[str, Any]:
-        gc = mail.gc_binary()
+        try:
+            gc = mail.gc_binary()
+        except mail.MailError as error:
+            return {"ok": False, "error": str(error)}
         argv = [gc, *subcommand, "--city", str(town.city_root), *flags, "--", *positionals]
         env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
         try:
@@ -476,7 +479,10 @@ class DashboardState:
         cached = self._mail_cache.get(town.name)
         if cached and time.time() - cached[0] < 5:
             return cached[1]
-        gc = mail.gc_binary()
+        try:
+            gc = mail.gc_binary()
+        except mail.MailError:
+            return None
         env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
         try:
             result = self.runner([gc, "bd", "list", "--city", str(town.city_root), "--type", "message", "--json", "--all", "--limit", "300"],

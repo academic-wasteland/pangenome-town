@@ -13,7 +13,9 @@ from pangenome_town import dashboard
 
 
 @pytest.fixture
-def cockpit(towns):
+def cockpit(towns, monkeypatch):
+    monkeypatch.setattr(dashboard.mail, "gc_binary", lambda: "/test/bin/gc")
+    monkeypatch.setattr(dashboard.mail, "wake_resident", lambda town, resident: True)
     state = dashboard.DashboardState([towns["ubar"], towns["yamatai"]])
     calls = []
 
