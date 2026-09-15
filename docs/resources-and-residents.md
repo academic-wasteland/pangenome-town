@@ -69,7 +69,10 @@ Use Cockpit → Mail & residents to chat locally. From another town, send:
 
 or use `"resident":"bloodninja"` in either town. The immediate response confirms
 delivery only; the resident's actual answer arrives separately. Keep the local
-workstation and Qwen service available for resident replies.
+workstation and Qwen service available for resident replies. Resident `agent.toml`
+files explicitly set `session = "acp"` for the local OpenCode/Qwen transport;
+after configuration changes, allow Gas City to drain and restart the session
+before sending another prompt.
 
 The bridge service pins `PT_GC_BIN` to the installed Gas City executable. This is
 important because `/usr/bin/gc` can be Graphviz's unrelated graph-counting tool.
