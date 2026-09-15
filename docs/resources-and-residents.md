@@ -79,3 +79,19 @@ important because `/usr/bin/gc` can be Graphviz's unrelated graph-counting tool.
 Named-resident delivery requires a positive JSON receipt with a mail ID; a zero
 exit code alone does not count as delivery. These requests are claimed before
 the generic research dispatcher can turn them into scientific workflows.
+
+## Contact an external town
+
+In Cockpit → Network, select **Contact town** on a discovered town, or open
+**Mail & residents → Contact an external town**. Choose the local sending town
+and one of the destination's advertised contact operations. **Describe** asks
+what it provides; **echo** automatically repeats your text; **message** contacts
+a resident only when the destination advertises that handler. An optional
+resident name selects a named agent. Sending opens the request in Live watch,
+where delivery and subsequent answers appear separately.
+
+For example, `lisan_al_gaib` is the relay address for Lisan al-Gaib. At the time
+of testing it advertised `echo` and `describe`; that does not establish that an
+AI resident is listening. Its operator can implement and advertise a `message`
+handler using the starter pack's custom-worker interface, or deploy the native
+Gas City bridge. The cockpit refreshes discovered capabilities automatically.

@@ -118,7 +118,17 @@ nav.jump a{white-space:nowrap;border:0;border-bottom:3px solid transparent;borde
     </div>
     <div>
       <div class="card" id="mail-view"><span class="muted">select a message</span></div>
-      <h2>Compose</h2>
+      <h2>Contact an external town</h2>
+      <div class="card form" id="peer-compose">
+        <label for="p-town">from town</label><select id="p-town"></select>
+        <label for="p-to">external town</label><select id="p-to"></select>
+        <label for="p-operation">request</label><select id="p-operation"></select>
+        <span></span><small class="muted" id="p-help"></small>
+        <label for="p-resident">resident (optional)</label><input id="p-resident" placeholder="Default resident if empty">
+        <label for="p-body">message</label><textarea id="p-body" maxlength="8000"></textarea>
+        <span></span><div><button class="btn" id="p-send">Send to town</button><p id="p-result" role="status"></p></div>
+      </div>
+      <h2>Compose local resident mail</h2>
       <div class="card form" id="compose">
         <label for="c-town">town</label><select id="c-town"></select>
         <label for="c-to">to</label><div><input id="c-to" list="c-to-list" placeholder="session alias or id, rig agent, or human" style="width:100%"><datalist id="c-to-list"></datalist></div>
@@ -293,8 +303,9 @@ async function loadSites(){
     <div style="margin-top:4px">${Object.entries(t.templates).map(([k,v]) => `<span class="chip ${v?"ok":"muted"}">${esc(k)}: ${v?esc(v):"nowhere"}</span>`).join("")}</div></div>`).join("") || '<span class="muted">no pangenome towns</span>';
 }
 
+let externalTowns = [];
 async function loadTowns(){
-  const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = [...towns.map(t => t.name), ...(j.federation?.towns || []).map(t => t.name)];
+  const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; externalTowns = j.federation?.towns || []; fillExternalTowns(); laneOrder = [...towns.map(t => t.name), ...(j.federation?.towns || []).map(t => t.name)];
   $("#towns").innerHTML = towns.map(t => `
     <div class="card">
       <div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.name)} · ${t.kind==="authority"?"authority town":esc(t.population)}</span></div>
@@ -308,7 +319,7 @@ async function loadTowns(){
       ${t.graph_summary && t.graph_summary.paths_total ? `<div class="muted">graph: ${Object.entries(t.graph_summary.graph||{}).map(([k,v])=>k+" "+v.toLocaleString()).join(", ")}; ${t.graph_summary.paths_total.toLocaleString()} paths</div>` : ""}
       <div style="margin-top:6px">${t.sessions.length ? t.sessions.map(s => `<span class="chip">${esc(s.template.split("/").pop())} · ${esc(s.state)}</span>`).join("") : '<span class="muted">no sessions</span>'}</div>
       <div class="muted" style="margin-top:6px">agent spend: ${t.costs.available ? `$${t.costs.usd} · ${t.costs.assistant_turns} turns · ${(t.costs.tokens.input+t.costs.tokens.output).toLocaleString()} tokens` : "n/a"}</div>
-    </div>`).join("") + (j.federation?.towns || []).map(t => `<div class="card"><strong>${esc(t.display)}</strong> <span class="chip">external town</span><div class="muted mono">${esc(t.name)}</div><p><span class="chip ${t.recently_seen?'ok':'warn'}">${t.recently_seen?'Recently seen':t.discovery_ok?'Not seen recently':'Discovery unavailable'}</span></p><div class="muted">Last contact: ${esc(t.last_seen ? fmtTs(t.last_seen) : 'unknown')}</div><p>${t.capabilities.map(c=>`<span class="chip">${esc(c)}</span>`).join(' ')}</p><small class="muted">Self-reported capabilities · remote hardware</small></div>`).join('') + (j.federation?.relays || []).filter(r=>!r.ok).map(r=>`<p class="warn">Relay discovery unavailable: ${esc(r.url)}. Showing previously known towns and recorded conversations.</p>`).join('');
+    </div>`).join("") + (j.federation?.towns || []).map(t => `<div class="card"><strong>${esc(t.display)}</strong> <span class="chip">external town</span><div class="muted mono">${esc(t.name)}</div><p><span class="chip ${t.recently_seen?'ok':'warn'}">${t.recently_seen?'Recently seen':t.discovery_ok?'Not seen recently':'Discovery unavailable'}</span></p><div class="muted">Last contact: ${esc(t.last_seen ? fmtTs(t.last_seen) : 'unknown')}</div><p>${t.capabilities.map(c=>`<span class="chip">${esc(c)}</span>`).join(' ')}</p><small class="muted">Self-reported capabilities · remote hardware</small><p><button class="btn" data-contact-town="${esc(t.name)}">Contact town</button></p></div>`).join('') + (j.federation?.relays || []).filter(r=>!r.ok).map(r=>`<p class="warn">Relay discovery unavailable: ${esc(r.url)}. Showing previously known towns and recorded conversations.</p>`).join('');
 }
 
 async function loadExchanges(){
@@ -546,7 +557,37 @@ function showMail(id){
   $("#r-send").addEventListener("click", async () => { const body = $("#r-body").value; if (await post("mail/reply", {town: mailTown, id: m.id, body})) loadMail(); });
   $("#r-mark").addEventListener("click", async () => { if (await post("mail/mark", {town: mailTown, id: m.id, unread: m.read})) loadMail(); });
 }
+function fillExternalTowns(){
+  const previous = $('#p-to').value;
+  $('#p-to').innerHTML = externalTowns.map(t=>`<option value="${esc(t.name)}">${esc(t.display)} (${esc(t.name)})</option>`).join('');
+  if(externalTowns.some(t=>t.name===previous)) $('#p-to').value=previous;
+  fillExternalOperations();
+}
+function fillExternalOperations(){
+  const target=externalTowns.find(t=>t.name===$('#p-to').value), previous=$('#p-operation').value;
+  const ops=['message','describe','echo'].filter(op=>target?.capabilities.includes(op));
+  $('#p-operation').innerHTML=ops.map(op=>`<option value="${op}">${{message:'Message a resident',describe:'Ask what this town provides',echo:'Test contact (echo)'}[op]}</option>`).join('');
+  if(ops.includes(previous)) $('#p-operation').value=previous;
+  $('#p-send').disabled=!ops.length;
+  updateExternalHelp();
+}
+function updateExternalHelp(){
+  const op=$('#p-operation').value;
+  $('#p-resident').disabled=op!=='message'; $('#p-body').disabled=op==='describe';
+  $('#p-help').textContent=op==='message'?'Delivery acknowledgment and the resident’s answer arrive separately.':op==='echo'?'Echo repeats your message automatically; it does not contact an AI resident.':op==='describe'?'Returns the town’s advertised services.':'This town has not advertised a contact operation.';
+}
 function initCompose(){
+  $('#p-town').innerHTML=towns.map(t=>`<option value="${esc(t.name)}">${esc(t.display)}</option>`).join('');
+  $('#p-to').addEventListener('change',fillExternalOperations);
+  $('#p-operation').addEventListener('change',updateExternalHelp);
+  $('#p-send').addEventListener('click',async()=>{
+    $('#p-send').disabled=true;
+    try {
+      const j=await post('peers/send',{town:$('#p-town').value,to:$('#p-to').value,operation:$('#p-operation').value,resident:$('#p-resident').value.trim(),body:$('#p-body').value});
+      if(j){ $('#p-result').textContent='Sent. Watch the request and replies in Live watch.'; $('#p-body').value=''; await loadMonitor(); focusTask(j.id); }
+    } finally {fillExternalOperations();}
+  });
+  document.addEventListener('click',e=>{const button=e.target.closest('[data-contact-town]'); if(!button)return; $('#p-to').value=button.dataset.contactTown; fillExternalOperations(); location.hash='mail'; changeView('mail'); $('#peer-compose').scrollIntoView({block:'center'});});
   $("#c-town").innerHTML = towns.map(t => `<option value="${esc(t.name)}">${esc(t.display)}</option>`).join("");
   $("#c-send").addEventListener("click", async () => {
     const body = {town: $("#c-town").value, to: $("#c-to").value.trim(), subject: $("#c-subject").value, body: $("#c-body").value, notify: $("#c-notify").checked};

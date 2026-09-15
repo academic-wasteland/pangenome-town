@@ -521,7 +521,30 @@ class DashboardState:
             raise ActionError("body must be a JSON object")
         town = self._town(payload.get("town"))
         self._mail_cache.pop(town.name, None)
-        if action == "mail/send":
+        if action == "peers/send":
+            from . import peers
+            from .exchange import Envelope
+
+            recipient = _name(payload.get("to"), "to")
+            target = next((p for p in self.federation()["towns"] if p["name"] == recipient), None)
+            if not target:
+                raise ActionError("select a discovered external town")
+            operation = payload.get("operation")
+            if operation not in {"echo", "describe", "message"} or operation not in target["capabilities"]:
+                raise ActionError("this town has not advertised that contact operation")
+            body = {"operation": operation}
+            if operation != "describe":
+                body["text"] = _text(payload.get("body"), "message", 8000)
+            if payload.get("resident") and operation == "message":
+                body["resident"] = _name(payload["resident"], "resident")
+            envelope = Envelope.new("question", town.name, recipient, body)
+            try:
+                receipt = peers.send(town, envelope, self.log)
+            except (peers.PeerError, OSError, ValueError, KeyError) as error:
+                raise ActionError(str(error)) from error
+            result = {"ok": True, "id": envelope.id, "state": "sent", "receipt": receipt}
+            self._record_action(town, "peer_send", {"to": recipient, "operation": operation, "id": envelope.id})
+        elif action == "mail/send":
             to = _name(payload.get("to"), "to")
             subject = _text(payload.get("subject"), "subject", 200)
             body = _text(payload.get("body"), "body", 8000)

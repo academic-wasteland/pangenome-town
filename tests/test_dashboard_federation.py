@@ -76,3 +76,32 @@ def test_delegation_permission_and_scheduler_are_distinct(towns, monkeypatch):
     state.log.event('yamatai', 'delegation_replayed', message.id, {'phase': 'replayed'})
     assert state.monitor()['messages'][0]['stage'] == 'completed'
     state.log.close()
+
+
+def test_external_contact_uses_local_identity_and_advertised_operations(towns, monkeypatch):
+    import pytest
+
+    from pangenome_town import peers
+
+    state = dashboard.DashboardState([towns['ubar']])
+    monkeypatch.setattr(state, 'federation', lambda: {'towns': [
+        {'name': 'lisan_al_gaib', 'capabilities': ['echo', 'describe']}]})
+    sent = []
+    def send(town, envelope, log):
+        sent.append(envelope)
+        log.record(envelope, town=town.name, direction='sent', status='sent')
+        return {'http_status': 200}
+    monkeypatch.setattr(peers, 'send', send)
+    payload = {'town': 'ubar', 'to': 'lisan_al_gaib', 'operation': 'echo', 'body': 'hello'}
+    result = state.act('peers/send', payload)
+    assert result['ok'] and sent[0].sender == 'ubar'
+    assert sent[0].recipient == 'lisan_al_gaib' and sent[0].body == {'operation': 'echo', 'text': 'hello'}
+    assert state.log.get(result['id'])['from'] == 'ubar'
+    with pytest.raises(dashboard.ActionError, match='not advertised'):
+        state.act('peers/send', dict(payload, operation='message'))
+    with pytest.raises(dashboard.ActionError, match='discovered'):
+        state.act('peers/send', dict(payload, to='unregistered'))
+    state.act('peers/send', dict(payload, operation='describe', body=''))
+    assert sent[-1].body == {'operation': 'describe'}
+    assert len(sent) == 2
+    state.log.close()
