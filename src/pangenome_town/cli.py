@@ -30,6 +30,12 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="pangenome-town", description="Operate one pangenome town.")
     root.add_argument("--town", type=Path, help="path to town.toml (default: $PT_TOWN_TOML or discovery)")
     commands = root.add_subparsers(dest="command", required=True)
+    from .cli_delegation import add_parser
+    add_parser(commands)
+    resources = commands.add_parser("resources", help="published local result collections")
+    resources.add_argument("--read", help="resource ID to read as a bounded base64 chunk")
+    resources.add_argument("--offset", type=int, default=0)
+    resources.add_argument("--sha256")
 
     serve = commands.add_parser("envoy", help="serve the town's envoy on a unix socket")
     serve.add_argument("--socket", help="socket path (default: $GC_SERVICE_SOCKET)")
@@ -233,6 +239,14 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         return 0
 
     log = ExchangeLog(town.exchange_db)
+    if arguments.command == "resources":
+        from . import resources
+        _print(resources.chunk(town, {"id": arguments.read, "offset": arguments.offset, "sha256": arguments.sha256})
+               if arguments.read else {"resources": resources.listing(town)})
+        return 0
+    if arguments.command == "delegate":
+        from .cli_delegation import command
+        return command(arguments, town, log)
     if arguments.command == "send":
         body: dict[str, Any] = {"text": arguments.text}
         if arguments.region:

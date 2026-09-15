@@ -185,6 +185,9 @@ class Node:
         (directory / "task.jsonld").write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if presentation is not None:
             (directory / "presentation.json").write_text(json.dumps(presentation, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        # Publish before validation/execution: an inline query can run for minutes.
+        record.save()
+        self._mirror(record, document, requester_hint)
         try:
             self._process(record, document, presentation)
         except Exception as error:  # noqa: BLE001
@@ -392,6 +395,7 @@ class Node:
         region, subject = _region_and_subject(self.town, document)
         tools = graph.GraphTools(self.town)
         out_dir = record.directory / "artifacts"
+        self._execution_started(record, kind, "inline")
         result = tools.run(kind, region, out_dir)
         built = contribution.build(self.town, document, result, subject)
         contribution.write(built, record.directory / "contribution.jsonld")
@@ -429,7 +433,8 @@ class Node:
         extra = tuple(sorted({keys[iri] for iri in _dataset_iris(document) if iri in served_restricted}))
         try:
             result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec,
-                                             driver=self.compute_driver, extra_datasets=extra)
+                                             driver=self.compute_driver, extra_datasets=extra,
+                                             on_start=lambda site: self._execution_started(record, template, "compute", site))
         except ComputeError as error:
             text = str(error)
             if record.gates is not None:
@@ -508,6 +513,20 @@ class Node:
     def _card_url(self) -> str:
         return f"{self.town.supervisor_url.rstrip('/')}/v0/city/{self.town.name}/svc/envoy/.well-known/agent-card.json"
 
+    def _execution_started(self, record: TaskRecord, operation: str, executor: str,
+                           site: dict[str, Any] | None = None) -> None:
+        record.state, record.message = "working", f"executing {operation} ({executor})"
+        record.save()
+        if self.log is not None:
+            current = self.log.get(record.id)
+            if current:
+                rcp = dict(current.get("rcp") or {})
+                rcp.update(state="working", message=record.message, gates=record.gates)
+                self.log.set_rcp(record.id, rcp)
+                self.log.set_status(record.id, "rcp-working")
+            self.log.event(self.town.name, "rcp_execution_started", record.id,
+                           {"operation": operation, "executor": executor, **(site or {})})
+
     def _mirror(self, record: TaskRecord, document: Any, requester_hint: str | None) -> None:
         if self.log is None:
             return
@@ -516,10 +535,14 @@ class Node:
         task_type = document.get("taskType") if isinstance(document, dict) else None
         body = {"text": text, "rcp_task_type": task_type, "rcp_state": record.state, "region": _region_text(document)}
         envelope = Envelope(id=record.id, kind="question", sender=sender, recipient=self.town.name, created=_now(), body=body)
-        self.log.record(envelope, town=self.town.name, direction="received", status=f"rcp-{record.state}")
+        if self.log.get(record.id) is None:
+            self.log.record(envelope, town=self.town.name, direction="received", status=f"rcp-{record.state}")
+        else:
+            self.log.set_status(record.id, f"rcp-{record.state}")
         self.log.set_rcp(record.id, {"task": document, "report": record.report, "verdict": record.verdict, "state": record.state,
                                      "contribution": record.contribution, "ledger": record.ledger, "gates": record.gates,
-                                     "refusal": record.refusal, "authority": record.authority, "sites": record.sites})
+                                     "refusal": record.refusal, "authority": record.authority, "sites": record.sites,
+                                     "message": record.message, "context_id": record.context_id})
         self.log.event(self.town.name, f"rcp_{record.state.replace('-', '_')}", record.id, {"message": record.message, "refusal": record.refusal})
 
 

@@ -13,6 +13,7 @@ import json
 import shutil
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,8 @@ def run_task(
     threads: int = 1,
     driver: Any | None = None,
     extra_datasets: tuple[str, ...] = (),
+    dataset_samples: tuple[str, ...] | None = None,
+    on_start: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     template = TEMPLATES.get(template_name)
     if template is None:
@@ -102,7 +105,7 @@ def run_task(
         if site is None:
             reasons = "; ".join(f"{item['site']}: {item['detail']}" for item in diagnostics) or "no sites declared"
             raise ComputeError(f"no reachable site holds {', '.join((*template.datasets, *extra_datasets))} ({reasons})")
-    samples = list(town.samples)
+    samples = list(town.samples if dataset_samples is None else dataset_samples)
     if spec is None:
         spec = plan(template_name, region=region, site=site, samples=samples, threads=threads, town=town)
     elif spec.get("workflow") != template_name:
@@ -125,6 +128,8 @@ def run_task(
     driver = driver or driver_for(site)
     started = time.time()
     try:
+        if on_start:
+            on_start({"site": site.name, "driver": site.driver, "scheduler": site.scheduler})
         result = driver.run(job, fetch_to=fetch_to)
         local: dict[str, Path] = dict(result.outputs)
         summary: dict[str, Any] = {}

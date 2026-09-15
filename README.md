@@ -43,13 +43,23 @@ reserved for Research Commons Protocol messages and validation reports.
 
 ## Dashboard (step 2)
 
-`pangenome-town dashboard --towns ../ubar/town.toml ../yamatai/town.toml` serves
-`http://127.0.0.1:8390/` (loopback only): town cards (city, envoy, data, sessions,
-agent spend from opencode's database), a two-lane timeline of exchanges with live
-updates over SSE, and a detail view per exchange (timeline, attachments rendered,
-the agent's tool calls and text, raw envelope, and for RCP tasks the validation
-report, verdict, claims, and commons rows). The ledger section shows commons
-standing, stamps, wanted items, and completions.
+`pangenome-town dashboard --towns ../ubar/town.toml ../yamatai/town.toml ../camelot/town.toml`
+serves `http://127.0.0.1:8390/` on loopback. Task watch is the landing view:
+a searchable queue, recorded request route, admission gates, execution handoffs,
+answers, and a live event feed. Select **Open evidence** for the full exchange,
+artifacts, validation reports and nearby agent transcripts. **Pause view** freezes
+the watchboard without stopping work.
+
+The other views contain the town network and exchange history, mail and resident
+actions, decisions and trust, and compute sites and service interfaces. Counts
+cover the latest 400 messages; the feed reads the latest 300 events. Routes use
+recorded links; configured compute access and time-correlated transcripts do not
+establish task ownership. Existing envoys need a restart to emit the added
+submission and execution-start events; old records remain viewable.
+
+See [the cockpit and execution model review](docs/cockpit-model-review.md) for
+implementation details, known gaps and prioritized changes to task identity,
+lifecycle, validation evidence and model evaluation.
 
 ## Research standards (step 3)
 
@@ -165,8 +175,10 @@ pangenome-town compute sites                      # reachability and which templ
 pangenome-town compute plan allele-frequency --region GRCh38:chr6:29940000-29990000
 ```
 
-DDBJ is Yamatai's compute cluster: only Yamatai declares it, as a Slurm site whose `submit_host` (`a001`) sits behind
-the `gw` gateway; every remote step runs as `ssh ddbj ssh a001 ...` and outputs stream back through both hops.
+Both towns can execute bounded direct queries at DDBJ. Yamatai alone holds the Slurm route through `a001`;
+dataset custody is independent. [Task-specific signed grants](docs/dataset-custody.md) authorize execution
+over explicit Saudi/Japanese sample manifests, including Saudi jobs delegated to Yamatai.
+[Published resources and residents](docs/resources-and-residents.md) covers shared pangenome outputs, Q and Bloodninja.
 Not yet done: requester-held compute allocations, issuance as RCP contributions, content
 inspection of released outputs, and a workstation envelope large enough for whole-contig `vg deconstruct`
 (it needs about 48 GB and up to two hours on JaSaPaGe, so the default limits refuse it).

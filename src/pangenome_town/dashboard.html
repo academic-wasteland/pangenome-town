@@ -57,6 +57,27 @@ textarea{width:100%;min-height:70px}
 .toast{position:fixed;right:16px;bottom:16px;max-width:min(420px,calc(100vw - 32px));background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.15)}
 .copy{cursor:pointer}
 @media (max-width:700px){.lanes{grid-template-columns:1fr}.form{grid-template-columns:1fr}}
+
+/* Task watch: a quiet console around an explicit route and event trail. */
+:root,:root[data-theme="light"]{--bg:#edf2f7;--fg:#213348;--muted:#53677d;--line:#cbd6e2;--card:#ffffff;--accent:#285da8;--ok:#14786e;--warn:#966000;--bad:#b33d52;--lane-a:#e7f0fa;--lane-b:#e6f3f1}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#172333;--fg:#e3edf8;--muted:#a5b8cb;--line:#3b5067;--card:#223247;--accent:#91bcfa;--ok:#76d3c3;--warn:#f1c16f;--bad:#ffa0b0;--lane-a:#293e57;--lane-b:#254942}}
+body{padding:0 28px 40px;font-family:"Aptos","Segoe UI",sans-serif;max-width:1800px;margin:auto}
+header{padding:22px 0 18px;margin:0;align-items:center}header h1{font-size:20px;margin-right:auto;letter-spacing:-.4px}header a{font-size:12px}
+h2{font-size:19px;text-transform:none;letter-spacing:-.3px;color:var(--fg);margin:12px 0}h3{font-size:15px;margin:0 0 8px}p{margin:6px 0 16px;max-width:78ch}
+nav.jump{margin:0 0 22px;gap:22px;border-bottom:1px solid var(--line);padding:0;overflow:auto;flex-wrap:nowrap}
+nav.jump a{white-space:nowrap;border:0;border-bottom:3px solid transparent;border-radius:0;background:none;padding:14px 0 11px;font-size:14px;color:var(--muted)}nav.jump a[aria-current="page"]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+[hidden]{display:none!important}.btn{padding:7px 12px;background:var(--card)}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.watch-heading,.feed-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.watch-heading h2{font-size:28px;margin:0}.watch-heading>div:last-child{font-size:12px;white-space:nowrap}
+.work-summary{display:flex;gap:24px;flex-wrap:wrap;padding:12px 0 20px}.work-summary button{border:0;background:transparent;color:var(--muted);font:inherit;padding:0;cursor:pointer}.work-summary strong{font-size:22px;color:var(--fg);margin-right:6px;font-variant-numeric:tabular-nums}
+.workbench{display:grid;grid-template-columns:330px minmax(0,1fr);border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);min-height:540px}.queue{border-right:1px solid var(--line);background:var(--bg)}.queue-controls{padding:16px;display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:center}.queue-controls input{grid-column:1/-1;width:100%;padding:9px;background:var(--card)}.queue-controls label{font-size:12px}.queue-controls label:first-child{grid-column:1/-1;font-weight:600}#queue-count{grid-column:1/-1;font-size:12px}#task-queue{max-height:490px;overflow:auto}
+.task-item{display:block;text-align:left;width:100%;padding:15px 16px;border:0;border-top:1px solid var(--line);border-left:3px solid transparent;background:transparent;color:var(--fg);font:inherit;cursor:pointer}.task-item:hover{background:var(--card)}.task-item[aria-pressed="true"]{border-left-color:var(--accent);background:var(--card)}.task-item strong{display:block;font-size:14px;margin:5px 0;overflow-wrap:anywhere}.task-item small{display:block;color:var(--muted)}.task-item .status{float:right}.task-stage{padding:24px;min-width:0}.task-title{display:flex;justify-content:space-between;gap:16px}.task-title h3{font-size:23px;line-height:1.25;overflow-wrap:anywhere}.task-title .btn{align-self:start;white-space:nowrap}.task-meta{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.task-route{display:grid;grid-template-columns:1fr 28px 1fr 28px 1fr;margin:26px 0;align-items:center}.route-node{border:1px solid var(--line);border-radius:8px;padding:14px;min-height:90px;overflow-wrap:anywhere}.route-node.current{border:2px solid var(--accent);background:var(--lane-a)}.route-node strong{display:block;margin-top:8px}.route-node small{color:var(--muted)}.route-arrow{text-align:center;color:var(--accent);font-size:23px}.task-notice{background:var(--lane-a);border-left:3px solid var(--accent);padding:12px 15px;margin:16px 0}.task-notice.warn{background:var(--bg);border-color:var(--warn)}
+.trace-list{list-style:none;padding:0;margin:14px 0;max-height:300px;overflow:auto}.trace-list li{display:grid;grid-template-columns:80px 14px 1fr;gap:8px;padding:0 0 16px}.trace-list time{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}.trace-dot{border-left:2px solid var(--line);position:relative;margin-left:4px}.trace-dot:before{content:"";width:8px;height:8px;background:var(--accent);border-radius:50%;position:absolute;left:-5px;top:5px}.trace-list small{display:block;color:var(--muted);overflow-wrap:anywhere}.trace-list strong{font-size:13px}
+.empty-state{padding:45px 24px;text-align:center;color:var(--muted)}.feed-heading{margin-top:22px}.feed-heading span,.coverage{font-size:12px}#activity-feed{border-top:1px solid var(--line);max-height:330px;overflow:auto}.feed-row{display:grid;grid-template-columns:95px 110px 1fr;gap:12px;text-align:left;width:100%;padding:10px 6px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--fg);font:inherit;font-size:13px}.feed-row[data-task]{cursor:pointer}.feed-row:hover{background:var(--card)}.feed-row time{color:var(--muted)}.coverage{margin-top:12px}.related-link{margin:3px}
+#detail{position:fixed;inset:24px 24px 24px max(24px,8vw);z-index:20;background:var(--card);padding:24px;overflow:auto;border:1px solid var(--line);border-radius:12px;box-shadow:0 0 0 100vmax #10233888;margin:0}.detail-close{position:sticky;top:0;float:right;z-index:1}body:has(#detail:not([hidden])){overflow:hidden}
+@media(max-width:900px){body{padding:0 16px 24px}.workbench{grid-template-columns:270px minmax(0,1fr)}.task-stage{padding:16px}.task-route{grid-template-columns:1fr;margin:16px 0;gap:5px}.route-node{min-height:0;padding:10px}.route-node strong{display:inline;margin-left:8px}.route-arrow{transform:rotate(90deg);line-height:22px}.watch-heading{align-items:start;flex-direction:column}.task-title{flex-direction:column}}
+@media(max-width:650px){.workbench{grid-template-columns:1fr}.queue{border-right:0;border-bottom:1px solid var(--line)}#task-queue{max-height:230px}.feed-heading{align-items:start;flex-direction:column;gap:0}.feed-row{grid-template-columns:75px 75px 1fr;gap:5px;font-size:12px}.work-summary{gap:15px}.work-summary strong{font-size:19px}header{gap:8px}header h1{width:100%}#detail{inset:8px;padding:16px}.lanes{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
 </style>
 </head>
 <body>
@@ -67,20 +88,28 @@ textarea{width:100%;min-height:70px}
   <a href="http://127.0.0.1:8372/" target="_blank" rel="noopener">gc dashboard</a>
   <a href="__AGENTSVIEW_URL__/" target="_blank" rel="noopener">AgentsView</a>
 </header>
-<nav class="jump"><a href="#monitor">Live monitor</a><a href="#mail">Mail</a><a href="#residents">Residents</a><a href="#towns-sec">Towns</a><a href="#exchanges">Exchanges</a><a href="#decisions">Decisions</a><a href="#authority-sec">Authority</a><a href="#trust">Trust</a><a href="#sites-sec">Sites</a><a href="#ledger-sec">Ledger</a><a href="#agentsview">AgentsView</a><a href="#interfaces">Interfaces</a></nav>
-
-<section id="monitor">
-  <h2>Live monitor <span class="muted" id="mon-summary"></span></h2>
-  <div class="monitor">
-    <div><svg class="net" id="net" viewBox="0 0 800 470" role="img" aria-label="Towns, the human operator, the commons and compute sites, with recent traffic"></svg></div>
-    <div class="card"><div class="k muted">RCP tasks in window, by gate</div><svg class="timeline" id="funnel" viewBox="0 0 400 230" role="img" aria-label="Gate funnel"></svg>
-      <div id="refusals" class="muted" style="margin-top:6px;font-size:12px"></div></div>
+<nav class="jump" aria-label="Cockpit views">
+<a href="#watch" data-view="watch">Task watch</a><a href="#network" data-view="network">Town network</a><a href="#mail" data-view="mail">Mail &amp; residents</a><a href="#decisions" data-view="governance">Decisions &amp; trust</a><a href="#interfaces" data-view="system">System</a>
+</nav>
+<section id="watch" data-page="watch">
+  <div class="watch-heading"><div><h2>Follow the work</h2><p class="muted">Where each request goes, what is running, and what needs attention.</p></div><div><button class="btn" id="pause-watch" aria-pressed="false">Pause view</button> <span id="watch-fresh" class="muted" role="status">Loading task snapshot…</span></div></div>
+  <div id="work-summary" class="work-summary"></div>
+  <div class="workbench">
+    <aside class="queue"><div class="queue-controls"><label for="task-search">Find a task</label><input id="task-search" type="search" placeholder="Task, town, region or ID"><label for="task-filter">Show</label><select id="task-filter"><option value="all">All requests</option><option value="active">Active / queued</option><option value="attention">Needs attention</option><option value="completed">Completed</option></select><span id="queue-count" class="muted"></span></div><div id="task-queue" aria-label="Requests"></div></aside>
+    <div class="task-stage"><div id="task-focus"><div class="empty-state">Waiting for the exchange log…</div></div></div>
   </div>
-  <div style="margin:8px 0 4px">window: <span id="win-btns"></span> <span class="muted">· click a marker to open the exchange · circles are RCP tasks, squares envelopes, diamonds authority and operator events</span></div>
-  <svg class="timeline" id="timeline" viewBox="0 0 1000 260" role="img" aria-label="Timeline of exchanges by town"></svg>
+  <div class="feed-heading"><h2>Latest recorded activity</h2><span class="muted">Newest first; task events open their route</span></div><div id="activity-feed"></div>
+  <p class="muted coverage" id="coverage"></p>
+</section>
+<section id="monitor" data-page="network" hidden>
+  <h2>Town network <span class="muted" id="mon-summary"></span></h2>
+  <p class="muted">Traffic between towns. Dashed site links show configured compute access, not task assignments.</p>
+  <div class="monitor"><div><svg class="net" id="net" viewBox="0 0 800 470" role="img" aria-label="Towns and recent traffic"></svg></div><div class="card"><h3>Admission gates</h3><svg class="timeline" id="funnel" viewBox="0 0 400 230" role="img" aria-label="Task admission gates"></svg><div id="refusals" class="muted"></div></div></div>
+  <div style="margin:12px 0">Time window: <span id="win-btns"></span></div>
+  <svg class="timeline" id="timeline" viewBox="0 0 1000 260" role="img" aria-label="Exchange history by town"></svg>
 </section>
 
-<section id="mail">
+<section id="mail" data-page="mail" hidden>
   <h2>Mail <span class="muted">(your gc inbox in each city: send, read, reply)</span></h2>
   <div class="row">
     <div>
@@ -101,58 +130,61 @@ textarea{width:100%;min-height:70px}
   </div>
 </section>
 
-<section id="residents">
+<section id="residents" data-page="mail" hidden>
   <h2>Residents <span class="muted">(agents per town: model, sessions, actions)</span></h2>
   <div id="residents-body"></div>
   <div class="card" id="peek-view" hidden><div class="k muted" id="peek-title"></div><pre id="peek-out"></pre></div>
 </section>
 
-<section id="towns-sec">
+<section id="towns-sec" data-page="network" hidden>
   <h2>Towns</h2>
   <div class="towns" id="towns"></div>
 </section>
 
-<section id="exchanges">
+<section id="exchanges" data-page="network" hidden>
   <h2>Exchanges <span class="muted" id="xcount"></span></h2>
   <div class="lanes" id="lanes"></div>
 </section>
 
-<section id="decisions">
+<section id="decisions" data-page="governance" hidden>
   <h2>Decisions waiting for you <span class="muted">(credential applications; decide on the command line)</span></h2>
   <div id="decisions-body"></div>
 </section>
 
-<section id="ledger-sec">
+<section id="ledger-sec" data-page="governance" hidden>
   <h2>Ledger: Wasteland commons <span class="muted" id="ledger-where"></span></h2>
   <div id="ledger" class="row"></div>
 </section>
 
-<section id="authority-sec">
+<section id="authority-sec" data-page="governance" hidden>
   <h2>Authority: Camelot</h2>
   <div id="authority" class="row"></div>
 </section>
 
-<section id="trust">
+<section id="trust" data-page="governance" hidden>
   <h2>Trust <span class="muted">(anchors, controlled datasets, scope library)</span></h2>
   <div id="trust-body" class="row"></div>
 </section>
 
-<section id="sites-sec">
+<section data-page="system" hidden><h2>Datasets and custody</h2><p class="muted">Storage access and scheduler access are separate. Every delegated execution needs the custodian's task-specific grant.</p><div id="datasets-body" class="towns"></div></section>
+<section data-page="system" hidden><h2>Published results and documents</h2><p class="muted">Selected outputs from local projects. Changes appear on refresh; downloads contain the current version.</p><label>Find a resource <input id="resource-search" type="search" placeholder="Town, collection or filename"></label> <span id="resource-count" class="muted"></span><div id="resources-body" class="scroll"></div></section>
+<section id="sites-sec" data-page="system" hidden>
   <h2>Compute sites</h2>
   <div id="sites" class="row"></div>
 </section>
 
-<section id="agentsview">
+<section id="agentsview" data-page="system" hidden>
   <h2>AgentsView <span class="muted">(agent sessions recorded in the town directories)</span></h2>
   <div id="agentsview-body"></div>
 </section>
 
-<section id="interfaces">
+<section id="interfaces" data-page="system" hidden>
   <h2>Interfaces <span class="muted">(where everything runs)</span></h2>
   <div id="interfaces-body" class="scroll"></div>
 </section>
 
-<section id="detail" hidden>
+<section id="detail" role="dialog" aria-modal="true" aria-label="Exchange detail" tabindex="-1" hidden>
+  <button class="btn detail-close" id="detail-close">Close detail</button>
   <h2>Exchange detail</h2>
   <div id="detail-body"></div>
 </section>
@@ -238,6 +270,23 @@ async function loadAuthority(){
     <div><h2>Credentials</h2><div class="scroll"><table><tr><th>type</th><th>issuer</th><th>holder</th><th>scope</th><th>valid until</th><th>status</th></tr>${a.credentials.map(c => `<tr><td>${esc(c.type.join(", "))}</td><td>${esc(short(c.issuer))}</td><td class="mono">${esc(short(c.holder))}</td><td>${esc(short(c.scope))}</td><td class="muted">${esc(c.validUntil||"")}</td><td><span class="chip ${({active:"ok",revoked:"bad"})[c.status]||"warn"}">${esc(c.status)}</span></td></tr>`).join("") || '<tr><td colspan="6" class="muted">none issued</td></tr>'}</table></div></div>`).join("");
 }
 
+let publishedResources = [];
+function renderResources(){
+  const query = $('#resource-search').value.toLowerCase();
+  const matches = publishedResources.filter(r=>[r.town,r.collection,r.name].join(' ').toLowerCase().includes(query));
+  $('#resource-count').textContent = `${matches.length} matches; showing ${Math.min(matches.length,100)}`;
+  const j = {resources: matches.slice(0,100)};
+  $('#resources-body').innerHTML = `<table><tr><th>Town</th><th>Collection</th><th>Document / result</th><th>Bytes</th></tr>${j.resources.map(r=>`<tr><td>${esc(r.town)}</td><td>${esc(r.collection)}${r.resident?' · '+esc(r.resident):''}</td><td><a download="${esc(r.name.split('/').pop())}" href="/api/resources/${encodeURIComponent(r.town)}/${encodeURIComponent(r.id)}">${esc(r.name)}</a></td><td>${r.bytes.toLocaleString()}</td></tr>`).join('')}</table>`;
+}
+$('#resource-search').oninput = renderResources;
+async function loadResources(){
+  const j = await (await fetch('/api/resources')).json();
+  publishedResources = j.resources; renderResources();
+  const d = await (await fetch('/api/datasets')).json();
+  $('#datasets-body').innerHTML = d.datasets.map(d=>`<div class="card"><strong>${esc(d.id)}</strong><p>Custodian: <b>${esc(d.custodian)}</b> · ${d.samples.length} samples</p><p>Storage: ${d.storage.map(esc).join(', ')} · ${esc(d.version)}</p><p>Execution routes (grant required): ${d.executors.map(e=>`${esc(e.town)} → ${esc(e.site)} (${esc(e.scheduler)})`).join('; ')}</p><small>${d.workflows.map(esc).join(', ')}</small></div>`).join('');
+}
+loadResources().catch(()=>{});
+setInterval(()=>loadResources().catch(()=>{}),30000);
 async function loadSites(){
   const j = await (await fetch("/api/sites")).json();
   $("#sites").innerHTML = j.towns.map(t => t.error ? `<div class="bad">${esc(t.town)}: ${esc(t.error)}</div>` : `<div><div><strong>${esc(t.display)}</strong></div>${renderSitesTable(t.sites)}
@@ -245,7 +294,7 @@ async function loadSites(){
 }
 
 async function loadTowns(){
-  const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = towns.map(t => t.name);
+  const r = await fetch("/api/towns"); const j = await r.json(); towns = j.towns; laneOrder = [...towns.map(t => t.name), ...(j.federation?.towns || []).map(t => t.name)];
   $("#towns").innerHTML = towns.map(t => `
     <div class="card">
       <div><strong>${esc(t.display)}</strong> <span class="muted">${esc(t.name)} · ${t.kind==="authority"?"authority town":esc(t.population)}</span></div>
@@ -259,19 +308,19 @@ async function loadTowns(){
       ${t.graph_summary && t.graph_summary.paths_total ? `<div class="muted">graph: ${Object.entries(t.graph_summary.graph||{}).map(([k,v])=>k+" "+v.toLocaleString()).join(", ")}; ${t.graph_summary.paths_total.toLocaleString()} paths</div>` : ""}
       <div style="margin-top:6px">${t.sessions.length ? t.sessions.map(s => `<span class="chip">${esc(s.template.split("/").pop())} · ${esc(s.state)}</span>`).join("") : '<span class="muted">no sessions</span>'}</div>
       <div class="muted" style="margin-top:6px">agent spend: ${t.costs.available ? `$${t.costs.usd} · ${t.costs.assistant_turns} turns · ${(t.costs.tokens.input+t.costs.tokens.output).toLocaleString()} tokens` : "n/a"}</div>
-    </div>`).join("");
+    </div>`).join("") + (j.federation?.towns || []).map(t => `<div class="card"><strong>${esc(t.display)}</strong> <span class="chip">external town</span><div class="muted mono">${esc(t.name)}</div><p><span class="chip ${t.recently_seen?'ok':'warn'}">${t.recently_seen?'Recently seen':t.discovery_ok?'Not seen recently':'Discovery unavailable'}</span></p><div class="muted">Last contact: ${esc(t.last_seen ? fmtTs(t.last_seen) : 'unknown')}</div><p>${t.capabilities.map(c=>`<span class="chip">${esc(c)}</span>`).join(' ')}</p><small class="muted">Self-reported capabilities · remote hardware</small></div>`).join('') + (j.federation?.relays || []).filter(r=>!r.ok).map(r=>`<p class="warn">Relay discovery unavailable: ${esc(r.url)}. Showing previously known towns and recorded conversations.</p>`).join('');
 }
 
 async function loadExchanges(){
   const r = await fetch("/api/exchanges?limit=200"); if (!r.ok) return; const j = await r.json();
   const xs = j.exchanges; $("#xcount").textContent = `(${xs.length})`;
-  const lanes = laneOrder.length ? laneOrder : [...new Set(xs.flatMap(x => [x.from, x.to]))];
+  const lanes = [...new Set([...laneOrder, ...xs.flatMap(x => [x.from, x.to])])];
   const html = lanes.map((name, i) => {
     const mine = xs.filter(x => x.from === name);
     return `<div class="lane-${i%2?"b":"a"}"><div class="hdr">${esc(name)} <span class="muted">sent ${mine.length}</span></div>` +
       mine.map(x => `<div class="msg ${selected===x.id?"sel":""}" data-id="${esc(x.id)}">
         <div class="k">${x.rcp?'<span class="chip">RCP</span> ':''}${CONTROLLED.includes(short(x.envelope.body.rcp_task_type))?'<span class="chip tag-controlled">controlled</span> ':''}${esc(x.kind)} → ${esc(x.to)} · ${fmtTs(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span>${x.answers.length?` · ${x.answers.length} answer${x.answers.length>1?"s":""}`:""}</div>
-        <div class="t">${esc((x.envelope.body.text||"").slice(0,220))}</div>
+        <div class="t">${esc((x.rcp?.message || x.envelope.body.text || x.envelope.body.error || x.envelope.body.operation || JSON.stringify(x.envelope.body)).slice(0,220))}</div>
         ${x.envelope.body.region?`<div class="mono muted">${esc(x.envelope.body.region)}</div>`:""}
         ${x.rcp && x.rcp.gates ? `<div style="margin-top:3px">${gateChips(x.rcp.gates)}${x.rcp.refusal && x.rcp.refusal.reason ? ` <span class="chip ${x.rcp.state==="rejected"||x.rcp.state==="failed"?"bad":"warn"}">${esc(x.rcp.refusal.gate)}: ${esc(x.rcp.refusal.reason)}</span>` : ""}</div>` : ""}
       </div>`).join("") + `</div>`;
@@ -280,7 +329,7 @@ async function loadExchanges(){
   document.querySelectorAll(".msg").forEach(el => el.addEventListener("click", () => select(el.dataset.id)));
 }
 
-async function select(id){
+async function select(id, refresh = false){
   selected = id; document.querySelectorAll(".msg").forEach(el => el.classList.toggle("sel", el.dataset.id === id));
   const r = await fetch("/api/exchanges/" + encodeURIComponent(id)); if (!r.ok) return;
   const x = await r.json(); $("#detail").hidden = false;
@@ -293,10 +342,10 @@ async function select(id){
     <div class="row">
       <div>
         <div class="card"><div class="k muted">${esc(x.kind)} · ${esc(x.from)} → ${esc(x.to)} · ${esc(x.created)} · <span class="status ${statusClass(x.status)}">${esc(x.status)}</span></div>
-          <div style="margin-top:6px">${esc(x.envelope.body.text||"")}</div>
+          <div style="margin-top:6px">${esc(x.rcp?.message || x.envelope.body.text || x.envelope.body.error || x.envelope.body.operation || JSON.stringify(x.envelope.body))}</div>
           <div class="mono muted" style="margin-top:4px">${esc(x.id)} · ${esc(x.digest)}</div></div>
         <h2>Timeline</h2><ul class="tl">${x.timeline.map(s => `<li><span class="mono muted">${fmtTs(s.ts)}</span> <strong>${esc(s.town)}</strong> ${esc(s.kind)} ${Object.keys(s.detail||{}).length?`<span class="muted mono">${esc(JSON.stringify(s.detail).slice(0,160))}</span>`:""}</li>`).join("")}</ul>
-        <h2>Answers</h2>${x.answers.length ? x.answers.map(a => `<div class="card"><div class="k muted">${esc(a.from)} · ${esc(a.created)} · ${esc(a.status)}</div><div style="margin-top:4px">${esc(a.envelope.body.text||"")}</div>${a.envelope.body.result?`<pre>${esc(JSON.stringify(a.envelope.body.result,null,1))}</pre>`:""}<div style="margin-top:6px">${artifacts(a.artifacts||[])}</div></div>`).join("") : '<span class="muted">no answer yet</span>'}
+        <h2>Answers</h2>${x.answers.length ? x.answers.map(a => `<div class="card"><div class="k muted">${esc(a.from)} · ${esc(a.created)} · ${esc(a.status)}</div><div style="margin-top:4px">${esc(a.envelope.body.text || a.envelope.body.error || "")}</div><pre>${esc(JSON.stringify(a.envelope.body,null,2))}</pre><div style="margin-top:6px">${artifacts(a.artifacts||[])}</div></div>`).join("") : '<span class="muted">no answer yet</span>'}
         <h2>Attachments on this message</h2>${artifacts(x.artifacts||[])}
         ${renderRcp(x.rcp)}
       </div>
@@ -305,7 +354,7 @@ async function select(id){
         <h2>Raw envelope</h2><pre>${esc(JSON.stringify(x.envelope,null,1))}</pre>
       </div>
     </div>`;
-  $("#detail").scrollIntoView({behavior:"smooth", block:"start"});
+  if (!refresh) { detailReturnFocus = document.activeElement; $("#detail-close").focus(); }
 }
 
 function renderArtifact(a){
@@ -328,11 +377,12 @@ function connect(){
   const es = new EventSource("/api/events/stream?after=" + lastSeq);
   es.onopen = () => { $("#live").textContent = "on"; $("#live").className = "ok"; };
   es.onerror = () => { $("#live").textContent = "reconnecting"; $("#live").className = "warn"; };
-  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && ev.message_id === selected) select(selected); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); if (String(ev.kind).startsWith("rcp_") || ["application_received","credential_issued","credential_revoked","application_denied"].includes(ev.kind)) { loadAuthority(); loadSites(); loadTowns(); loadDecisions(); } if (ev.kind === "cockpit_action") { loadMail(); loadResidents(); } loadMonitor(); });
+  es.addEventListener("exchange", (e) => { const ev = JSON.parse(e.data); lastSeq = Math.max(lastSeq, ev.seq); loadExchanges(); if (selected && !$("#detail").hidden && ev.message_id === selected) select(selected, true); if (["envoy_started","envoy_stopped","dispatched","answered"].includes(ev.kind)) loadTowns(); if (String(ev.kind).startsWith("rcp_")) loadLedger(); if (String(ev.kind).startsWith("rcp_") || ["application_received","credential_issued","credential_revoked","application_denied"].includes(ev.kind)) { loadAuthority(); loadSites(); loadTowns(); loadDecisions(); } if (ev.kind === "cockpit_action") { loadMail(); loadResidents(); } scheduleMonitor(); });
 }
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString(); }, 1000);
 setInterval(loadTowns, 30000);
-loadTowns().then(loadExchanges).then(loadLedger).then(loadAuthority).then(loadSites).then(connect);
+loadTowns().then(loadExchanges).catch(() => {});
+loadLedger(); loadAuthority(); loadSites();
 setInterval(loadLedger, 60000);
 </script>
 
@@ -342,7 +392,7 @@ const TOKEN = "__COCKPIT_TOKEN__";
 const WINDOWS = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800};
 let winKey = "6h", mailTown = null, mailCache = [], seenMonitor = new Set(), monitorData = null, firstMonitor = true;
 const toSec = (t) => typeof t === "number" ? t : (t ? Date.parse(t) / 1000 : 0);
-const outcome = (m) => m.rcp ? ({completed:"ok", working:"warn", "input-required":"warn", submitted:"warn", rejected:"bad", failed:"bad", canceled:"muted"}[m.state] || "muted") : ({answered:"ok", delivered:"ok", sent:"ok", failed:"bad", delivery_failed:"bad"}[m.status] || "muted");
+const outcome = (m) => m.stage === "failed" ? "bad" : m.rcp ? ({completed:"ok", working:"warn", "input-required":"warn", submitted:"warn", rejected:"bad", failed:"bad", canceled:"muted"}[m.state] || "muted") : ({answered:"ok", delivered:"ok", sent:"ok", failed:"bad", delivery_failed:"bad"}[m.status] || "muted");
 
 function toast(text, bad){ const el = document.createElement("div"); el.className = "toast"; el.innerHTML = `<span class="${bad?"bad":"ok"}">${esc(text)}</span>`; document.body.appendChild(el); setTimeout(() => el.remove(), 6000); }
 async function post(action, body){
@@ -359,6 +409,7 @@ function layout(nodes){
   const pangenome = nodes.filter(n => n.kind === "pangenome"), authority = nodes.filter(n => n.kind === "authority");
   pangenome.forEach((n, i) => { pos[n.id] = {x: pangenome.length === 1 ? 150 : 130 + i * (540 / (pangenome.length - 1)), y: 245, label: n.display, kind: "pangenome"}; });
   authority.forEach((n, i) => { pos[n.id] = {x: 240 + (i - (authority.length - 1) / 2) * 160, y: 405, label: n.display, kind: "authority"}; });
+  nodes.filter(n => n.kind === "federated").forEach((n,i) => { pos[n.id] = {x: 100 + (i % 4) * 200, y: 530 + Math.floor(i / 4) * 110, label: n.display, kind: "federated"}; });
   return pos;
 }
 function edgeOf(m){ const from = m.from === "external" ? "human" : m.from; return [from, m.to]; }
@@ -374,6 +425,7 @@ function curve(a, b, bend){ const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx
 function renderNet(data){
   const svg = $("#net"), now = data.now, span = WINDOWS[winKey];
   const pos = layout(data.nodes);
+  svg.setAttribute("viewBox", `0 0 800 ${Math.max(470, ...Object.values(pos).map(p=>p.y+75))}`);
   const agg = {};
   const add = (from, to, cls) => { if (!pos[from] || !pos[to] || from === to) return; const k = from + ">" + to; agg[k] = agg[k] || {from, to, n: 0, cls: "muted"}; agg[k].n++; agg[k].cls = cls; };
   data.messages.filter(m => now - toSec(m.created) <= span).slice().reverse().forEach(m => { const [f, t] = edgeOf(m); add(f, t, outcome(m)); });
@@ -391,7 +443,7 @@ function renderNet(data){
     const pending = town && town.authority ? town.authority.pending_applications : 0;
     const sessions = town ? (town.sessions || []).length : 0;
     html += `<g class="node ${p.kind}" id="n-${esc(id)}"><circle class="pulse" cx="${p.x}" cy="${p.y}" r="30"/><circle class="body" cx="${p.x}" cy="${p.y}" r="28"/><text x="${p.x}" y="${p.y + 4}" text-anchor="middle">${esc(p.label.split(" ")[0])}</text>
-      <text x="${p.x}" y="${p.y + 44}" text-anchor="middle" class="sub">${esc(p.kind === "pangenome" ? `${sessions} session${sessions === 1 ? "" : "s"}` : p.kind === "authority" ? `${pending || 0} pending` : "")}</text></g>`;
+      <text x="${p.x}" y="${p.y + 44}" text-anchor="middle" class="sub">${esc(p.kind === "pangenome" ? `${sessions} session${sessions === 1 ? "" : "s"}` : p.kind === "authority" ? `${pending || 0} pending` : p.kind === "federated" ? "external town" : "")}</text></g>`;
   });
   svg.innerHTML = html;
   return pos;
@@ -449,14 +501,29 @@ function renderFunnel(data){
   $("#refusals").innerHTML = (older ? `<div>${older} older task${older === 1 ? "" : "s"} from before the gate records are not counted</div>` : "") + (Object.keys(reasons).length ? "refusals: " + Object.entries(reasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${esc(k)} ×${v}</span>`).join("") : "no refusals in window");
   $("#mon-summary").textContent = `(${tasks.length} RCP tasks, ${data.messages.filter(m => now - toSec(m.created) <= span).length} messages in the last ${winKey})`;
 }
+let monitorBusy = false, monitorTimer = null, watchPaused = false, watchId = null;
+function scheduleMonitor(){ clearTimeout(monitorTimer); monitorTimer = setTimeout(loadMonitor, 250); }
 async function loadMonitor(){
-  const response = await fetch("/api/monitor"); if (!response.ok) return; const data = await response.json(); monitorData = data;
-  const pos = renderNet(data); renderTimeline(data); renderFunnel(data);
-  const fresh = [];
-  data.messages.forEach(m => { const k = "m" + m.id + (m.state || m.status); if (!seenMonitor.has(k)) { seenMonitor.add(k); fresh.push(() => { const [f, t] = edgeOf(m); fly(pos, f, t, outcome(m)); }); } });
-  data.events.forEach(e => { const k = "e" + e.seq; if (!seenMonitor.has(k)) { seenMonitor.add(k); const ed = eventEdge(e); if (ed) fresh.push(() => fly(pos, ed[0], ed[1], ed[2] === "info" ? "warn" : ed[2])); } });
-  if (!firstMonitor) fresh.slice(-12).forEach((f, i) => setTimeout(f, i * 350));
-  firstMonitor = false;
+  if (monitorBusy || watchPaused) return;
+  monitorBusy = true;
+  try {
+    const response = await fetch("/api/monitor"); if (!response.ok) throw Error(`HTTP ${response.status}`);
+    const data = await response.json(); if (watchPaused) return; monitorData = data;
+    renderWatch(data); const pos = renderNet(data); renderTimeline(data); renderFunnel(data);
+    const fresh = data.events.filter(e => !seenMonitor.has(e.seq));
+    seenMonitor = new Set(data.events.map(e => e.seq));
+    if (!firstMonitor && !matchMedia('(prefers-reduced-motion: reduce)').matches) fresh.slice(-6).forEach((e, i) => {
+      const m = data.messages.find(m => m.id === e.message_id), edge = eventEdge(e) || (m && edgeOf(m));
+      if (edge) setTimeout(() => fly(pos, edge[0], edge[1], m ? outcome(m) : 'warn'), i * 250);
+    });
+    if (firstMonitor) { lastSeq = data.cursor || 0; connect(); }
+    firstMonitor = false;
+    $("#watch-fresh").textContent = `Updated ${fmtTs(data.now)}`;
+    $("#watch-fresh").className = 'muted';
+  } catch (error) {
+    $("#watch-fresh").textContent = `Snapshot unavailable (${error.message}). Retrying…`;
+    $("#watch-fresh").className = 'bad';
+  } finally { monitorBusy = false; }
 }
 
 /* ---------- mail ---------- */
@@ -559,12 +626,89 @@ function initCockpit(){
   $("#win-btns").innerHTML = Object.keys(WINDOWS).map(k => `<button class="btn ${k === winKey ? "on" : ""}" data-win="${k}">${k}</button>`).join(" ");
   $("#win-btns").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { winKey = b.dataset.win; $("#win-btns").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); if (monitorData) { renderNet(monitorData); renderTimeline(monitorData); renderFunnel(monitorData); } }));
   const ready = () => towns.length ? Promise.resolve() : new Promise(r => setTimeout(() => ready().then(r), 300));
-  ready().then(() => { initCompose(); loadMonitor(); loadMail(); loadResidents(); loadDecisions(); loadTrust(); loadAgentsView(); loadInterfaces(); });
+  loadMonitor();
+  ready().then(() => { initCompose(); loadMail(); loadResidents(); loadDecisions(); loadTrust(); loadAgentsView(); loadInterfaces(); });
   setInterval(loadMonitor, 5000);
   setInterval(() => { loadMail(); loadDecisions(); }, 20000);
   setInterval(() => { loadResidents(); loadInterfaces(); }, 30000);
   setInterval(loadAgentsView, 120000);
 }
+/* Task projection: routes use recorded endpoints, never timing-based ownership. */
+const STAGE_LABELS = {'submitted':'Validating / submitted','queued':'Queued','working':'Executing','input-required':'Needs input','rejected':'Rejected','failed':'Failed','completed':'Completed','canceled':'Canceled'};
+const activeStages = new Set(['submitted','queued','working','sending']);
+const attentionStages = new Set(['input-required','rejected','failed']);
+const stageLabel = m => STAGE_LABELS[m.stage] || m.stage || 'Unknown';
+const stageColor = m => m.stage === 'completed' ? 'ok' : attentionStages.has(m.stage) ? (m.stage === 'input-required' ? 'warn' : 'bad') : activeStages.has(m.stage) ? 'warn' : 'muted';
+const taskName = m => m.task ? m.task.replace(/Task$/, '').replace(/([a-z])([A-Z])/g,'$1 $2') : m.text || 'Peer question';
+const eventName = e => ({sent:'Request sent', received:'Received by town', dispatched:'Dispatched to agent', query:'Query recorded', answered:'Answer produced', rcp_submitted:'Task submitted',rcp_execution_started:'Execution started',rcp_working:'Work queued / updated',rcp_completed:'Contribution completed',rcp_failed:'Task failed',rcp_input_required:'Input required',rcp_rejected:'Task rejected',rcp_stamped:'Result stamped',rcp_referral_followed:'Referral followed'}[e.kind] || e.kind.replaceAll('_',' '));
+function changeView(page){
+  document.querySelectorAll('[data-page]').forEach(s => s.hidden = s.dataset.page !== page);
+  document.querySelectorAll('nav [data-view]').forEach(a => { if(a.dataset.view === page) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
+}
+function viewFromHash(){
+  const key = location.hash.slice(1), nav = [...document.querySelectorAll('nav [data-view]')].find(a => a.hash === location.hash);
+  const section = document.getElementById(key);
+  changeView(nav?.dataset.view || section?.dataset.page || 'watch');
+}
+function focusTask(id){ $('#task-filter').value='all'; $('#task-search').value=''; watchId = id; location.hash = 'watch'; changeView('watch'); if(monitorData) renderWatch(monitorData); }
+function renderWatch(data){
+  const tasks = data.messages.filter(m => m.kind === 'question');
+  const counts = [['all','Requests', tasks.length],['active','Active / queued', tasks.filter(m=>activeStages.has(m.stage)).length],['attention','Need attention',tasks.filter(m=>attentionStages.has(m.stage)).length],['completed','Completed',tasks.filter(m=>m.stage==='completed').length]];
+  $('#work-summary').innerHTML = counts.map(([key,label,n])=>`<button data-filter="${key}"><strong>${n}</strong>${label}</button>`).join('');
+  $('#work-summary').querySelectorAll('button').forEach(b=>b.onclick=()=>{ $('#task-filter').value=b.dataset.filter; renderWatch(data); });
+  const q = $('#task-search').value.trim().toLowerCase(), filter = $('#task-filter').value;
+  const visible = tasks.filter(m => (filter === 'all' || filter === 'active' && activeStages.has(m.stage) || filter === 'attention' && attentionStages.has(m.stage) || filter === 'completed' && m.stage === 'completed') && [m.text,m.task,m.from,m.to,m.region,m.id,m.task_id].join(' ').toLowerCase().includes(q));
+  visible.sort((a,b) => Number(activeStages.has(b.stage))-Number(activeStages.has(a.stage)) || toSec(b.updated)-toSec(a.updated));
+  if(!visible.some(m=>m.id===watchId)) watchId = visible[0]?.id || null;
+  $('#queue-count').textContent = `${visible.length} of ${tasks.length} requests`;
+  const queueScroll = $('#task-queue').scrollTop;
+  const focusedTask = document.activeElement?.closest('#task-queue button')?.dataset.task;
+  $('#task-queue').innerHTML = visible.map(m=>`<button class="task-item" data-task="${esc(m.id)}" aria-pressed="${m.id===watchId}"><span class="status ${stageColor(m)}">${esc(stageLabel(m))}</span><small>${esc(m.from)} → ${esc(m.to)}</small><strong>${esc(taskName(m).slice(0,110))}</strong><small>${esc(m.region || m.id.slice(-12))} · ${esc(fmtTs(m.updated))}</small></button>`).join('') || '<div class="empty-state">No requests match. Try another filter or search.</div>';
+  $('#task-queue').scrollTop = queueScroll;
+  $('#task-queue').querySelectorAll('button').forEach(b=> { b.onclick=()=>{watchId=b.dataset.task;renderWatch(data);}; if(b.dataset.task===focusedTask)b.focus({preventScroll:true}); });
+  const m = visible.find(m=>m.id===watchId);
+  renderTaskFocus(m, tasks);
+  const feedScroll = $('#activity-feed').scrollTop;
+  $('#activity-feed').innerHTML = data.events.slice(-30).reverse().map(e=>`<button class="feed-row" ${tasks.some(m=>m.id===e.message_id)?`data-task="${esc(e.message_id)}"`:''}><time>${esc(fmtTs(e.ts))}</time><strong>${esc(e.town)}</strong><span>${esc(eventName(e))}${e.detail?.message?': '+esc(e.detail.message):''}</span></button>`).join('') || '<div class="empty-state">No activity yet. New exchange events will appear here automatically.</div>';
+  $('#activity-feed').scrollTop=feedScroll;
+  $('#activity-feed').querySelectorAll('[data-task]').forEach(b=>b.onclick=()=>focusTask(b.dataset.task));
+  $('#coverage').textContent = `Snapshot: latest ${data.messages.length} messages (limit ${data.message_limit || 400}) and ${data.events.length} events (limit ${data.event_limit || 300}). Counts describe this snapshot, not the full history. Routes show recorded handoffs; configured sites are not evidence of execution.`;
+}
+function renderTaskFocus(m, tasks){
+  if(!m){$('#task-focus').innerHTML='<div class="empty-state"><h3>No task selected</h3>Choose a request in the queue to follow its route, gate decisions and event trail.</div>';return;}
+  const previousTrace = $('#task-focus .trace-list')?.scrollTop || 0;
+  const start = [...(m.trail||[])].reverse().find(e=>e.kind==='rcp_execution_started');
+  const executor = start ? (start.detail.executor === 'inline' ? 'Inline query runner' : (start.detail.site || 'Compute runner')) : m.stage === 'queued' ? 'Awaiting a worker' : m.stage === 'completed' ? 'Result recorded' : 'No execution recorded';
+  const related = tasks.filter(t=>t.id!==m.id && (t.in_reply_to===m.id || m.in_reply_to===t.id || m.context_id && t.context_id===m.context_id));
+  const message = m.refusal_reason ? `${m.refusal_gate || 'Task'}: ${m.refusal_reason}. ${m.message || ''}` : m.message || (m.stage==='queued' ? 'The request is queued. An agent session has not been linked to this task in the log.' : m.stage==='completed' ? 'A result was recorded. Open the evidence to inspect answers and validation.' : 'Waiting for the next recorded task event.');
+  $('#task-focus').innerHTML=`<div class="task-title"><div><span class="status ${stageColor(m)}">${esc(stageLabel(m))}</span><h3>${esc(taskName(m))}</h3></div><button class="btn" id="open-evidence">Open evidence</button></div><div class="task-meta">${esc(m.region || '')} ${esc(m.id)}<br>Created ${esc(new Date(m.created).toLocaleString())} · Last event ${esc(fmtTs(m.updated))}</div>
+  <div class="task-route" aria-label="Recorded task route"><div class="route-node"><small>Requester</small><strong>${esc(m.from==='external'?'External requester':m.from)}</strong></div><div class="route-arrow" aria-hidden="true">→</div><div class="route-node ${activeStages.has(m.stage)?'current':''}"><small>Receiving town</small><strong>${esc(m.to)}</strong></div><div class="route-arrow" aria-hidden="true">→</div><div class="route-node ${m.stage==='working'?'current':''}"><small>${start?'Execution recorded':'Execution / outcome'}</small><strong>${esc(executor)}</strong>${start?`<small>${esc(start.detail.operation || '')}${start.detail.scheduler==='slurm'?' · scheduler handoff; job state not tracked':''}</small>`:''}</div></div>
+  ${m.delegation?`<div class="card"><strong>Delegated execution</strong><p>Original requester: ${esc(m.delegation.requester)} → executor: ${esc(m.delegation.executor)} → site: ${esc(m.delegation.site)}</p><p>Dataset grants: ${Object.keys(m.delegation.datasets || {}).map(esc).join(', ')}</p><p>${(m.trail||[]).filter(e=>e.kind==='delegation_authorized').map(e=>'Approved custodians: '+(e.detail.custodians||[]).map(esc).join(', ')).join(' · ')}</p><p>${(m.trail||[]).filter(e=>e.kind==='delegation_scheduler').map(e=>'Job '+esc(e.detail.job_id)+': '+esc(e.detail.status)).join(' → ')}</p></div>`:''}
+  ${m.rcp?gateChips(m.gates):''}<div class="task-notice ${attentionStages.has(m.stage)?'warn':''}">${esc(message)}</div>
+  ${related.length?`<h3>Linked requests</h3><p class="muted">Explicit reply or shared context links; shared context does not imply delegation.</p>${related.map(t=>`<button class="btn related-link" data-related="${esc(t.id)}">${esc(t.from)} → ${esc(t.to)}: ${esc(taskName(t))}</button>`).join('')}`:''}
+  <h3>Recorded handoffs &amp; progress</h3><ol class="trace-list">${(m.trail||[]).map(e=>`<li><time title="${esc(e.ts)}">${esc(fmtTs(e.ts))}</time><span class="trace-dot"></span><div><strong>${esc(eventName(e))}</strong> in ${esc(e.town)}<small>${esc(e.detail?.message || e.detail?.detail || e.detail?.operation || e.detail?.status || '')}</small></div></li>`).join('') || '<li>No task events recorded.</li>'}${(m.answers||[]).map(a=>`<li><time>${esc(fmtTs(a.created))}</time><span class="trace-dot"></span><div><strong>Answer</strong> ${esc(a.from)} → ${esc(a.to)}</div></li>`).join('')}</ol><p class="muted coverage">Latest 80 task events. Agent transcripts in the evidence panel are correlated by town and time; they are not proof of task ownership.</p>`;
+  $('#task-focus .trace-list').scrollTop=previousTrace;
+  $('#open-evidence').onclick=()=>select(m.id);
+  $('#task-focus').querySelectorAll('[data-related]').forEach(b=>b.onclick=()=>focusTask(b.dataset.related));
+}
+let detailReturnFocus = null;
+function closeDetail(){ $('#detail').hidden=true; selected=null; if(detailReturnFocus?.isConnected) detailReturnFocus.focus(); else $('#task-search').focus(); }
+$('#detail-close').onclick=closeDetail;
+document.addEventListener('keydown',e=>{
+  if($('#detail').hidden)return;
+  if(e.key==='Escape')closeDetail();
+  if(e.key==='Tab'){
+    const controls=[...$('#detail').querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex="0"]')].filter(el=>el.getClientRects().length);
+    const first=controls[0],last=controls.at(-1);
+    if(e.shiftKey && document.activeElement===first){e.preventDefault();last?.focus();}
+    else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}
+  }
+});
+$('#task-search').oninput=()=>monitorData&&renderWatch(monitorData);
+$('#task-filter').onchange=()=>monitorData&&renderWatch(monitorData);
+$('#pause-watch').onclick=()=>{watchPaused=!watchPaused;$('#pause-watch').textContent=watchPaused?'Resume view':'Pause view';$('#pause-watch').setAttribute('aria-pressed',String(watchPaused));if(watchPaused)$('#watch-fresh').textContent='View paused; tasks continue running';else loadMonitor();};
+window.addEventListener('hashchange',viewFromHash);viewFromHash();
+
 initCockpit();
 </script>
 </body>

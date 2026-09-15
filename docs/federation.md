@@ -35,3 +35,18 @@ The starter repository documents host installation, explicit public analysis
 operations, invitation/revocation, wire semantics, executable tests and rollback.
 This transport does not implement Dolt ledger federation or confer authority to
 access a controlled dataset.
+
+### Local cockpit visibility
+
+The dashboard reads public relay discovery from each configured federation identity
+and refreshes town cards every 30 seconds. External towns appear with their last
+relay contact and self-reported capabilities. They also appear in the network map,
+traffic timeline, and conversation lanes; search their handle in Task watch to
+follow requests and open full replies. An answer with `ok: false` is shown as a
+failed request, and structured answer bodies are visible in the evidence panel.
+
+Discovery does not consume mail or reveal bridge tokens. Messages come from the
+local exchange journal written by the city bridges, so the dashboard shows
+conversations involving your cities, not private conversations between other
+participants. During a discovery outage, cached towns and journal participants
+remain visible. External machines do not receive local resident/session controls.

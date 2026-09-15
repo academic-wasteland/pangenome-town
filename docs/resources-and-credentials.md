@@ -91,7 +91,7 @@ max_mem_gb = 32
 max_wall_seconds = 1800
 
 [[sites]]
-name = "ddbj"                    # declared by Yamatai only: DDBJ is Yamatai's cluster
+name = "ddbj"                    # Slurm route declared by Yamatai only; storage is shared
 driver = "ssh"
 host = "ddbj"                    # ~/.ssh/config alias for the gateway; the key never leaves the agent/keyring
 submit_host = "a001"             # login node behind the gateway that runs sbatch
@@ -317,11 +317,10 @@ an expired credential, and a revoked credential each fail verification with a sp
 
 ## 5. Out of scope for the minimal example
 
-- DDBJ belongs to Yamatai (decision 2026-09-14): only Yamatai declares the `ddbj` site. Jobs cannot be submitted
-  from the `gw` gateway (no Slurm configuration there), so the site sets `submit_host = "a001"` and every step runs
-  as `ssh ddbj ssh a001 <command>`, using the gateway's trusted host keys; outputs are streamed back with `cat`.
-  Ubar has no DDBJ capability and refers such work to Yamatai. Ibex needs a service account; a shared personal key
-  likely violates KAUST HPC policy.
+- Dataset custody and execution routes are now separate: both towns have `ddbj-direct`, while only
+  Yamatai has the `ddbj` Slurm route through `a001`. See [dataset custody](dataset-custody.md)
+  for task-specific signed grants and logical cohort manifests. These additions do not replace
+  the controlled RCP authority gates described here.
 - `ComputeAllocation` credentials (a requester-held compute budget issued by a site operator).
 - Issuance as RCP contributions (the registrar speaks plain JSON over HTTP for now).
 - W3C Data Integrity conformance, DIDs, OIDC4VP, status lists with privacy.

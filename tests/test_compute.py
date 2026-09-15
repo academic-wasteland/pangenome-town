@@ -238,7 +238,9 @@ datasets = ["graph", "vcf"]
 def test_genotype_export_runs_locally(towns, toy_data, tmp_path):
     town = _vcf_town(towns, toy_data)
     out = tmp_path / "export"
-    result = run_task(town, template_name="genotype-export", region=REGION, out_dir=out)
+    starts = []
+    result = run_task(town, template_name="genotype-export", region=REGION, out_dir=out, on_start=starts.append)
+    assert starts == [{"site": "workstation", "driver": "local", "scheduler": "none"}]
     assert result["site"] == "workstation" and result["variant_count"] == 3 and result["sample_count"] == 2
     assert [(o["name"], o["class"]) for o in result["outputs"]] == [("genotypes.tsv", INDIVIDUAL)]
     table = Path(result["outputs"][0]["path"])
@@ -387,7 +389,7 @@ def test_ssh_driver_uploads_quoted_script_runs_and_fetches(fake_remote, tmp_path
     assert uploaded == driver.script(job)
     assert shlex.join(["printf", "%s\\n", "hello world; not a command"]) + " > " + shlex.quote(f"{work}/out file.txt") in uploaded
     log = fake_remote["log"].read_text(encoding="utf-8")
-    assert "cat > " in log and f"scp ddbj-test:{work}/out file.txt" in log
+    assert "cat > " in log and f"cat {shlex.quote(work + '/out file.txt')}" in log
     if scheduler == "slurm":
         assert result.backend_id == "4242"
         assert "sbatch --parsable --time=00:10:00 --cpus-per-task=1 --mem=1G" in log and "sacct -j 4242 -n -X -o State" in log

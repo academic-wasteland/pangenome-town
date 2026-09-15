@@ -182,3 +182,26 @@ def test_reputation_from_commons_pays_for_a_large_analysis(towns, tmp_path):
             assert record.ledger == {"wanted": "w-test", "completion": "c-test", "completed_by": "ubar", "posted_by": "yamatai"}
     finally:
         log.close()
+
+
+def test_task_visible_before_processing_and_while_executing(node, monkeypatch):
+    node, _, log = node
+
+    def process(record, document, presentation):
+        assert log.get(record.id)['rcp']['state'] == 'submitted'
+        assert node.get(record.id).state == 'submitted'
+        node._execution_started(record, 'variants', 'inline')
+        current = log.get(record.id)
+        assert current['rcp']['state'] == 'working'
+        assert current['from'] == 'yamatai'
+        assert node.get(record.id).state == 'working'
+        assert log.recent_events(1)[0]['kind'] == 'rcp_execution_started'
+        record.state, record.message = 'completed', 'Result ready'
+
+    monkeypatch.setattr(node, '_process', process)
+    record = node.submit({'@id': 'urn:test', 'taskType': 'variants'}, requester_hint='yamatai', context_id='context-1')
+    mirrored = log.get(record.id)
+    assert mirrored['rcp']['state'] == 'completed'
+    assert mirrored['rcp']['message'] == 'Result ready'
+    assert mirrored['rcp']['context_id'] == 'context-1'
+    assert mirrored['from'] == 'yamatai'

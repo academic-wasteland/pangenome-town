@@ -109,3 +109,59 @@ def test_concurrent_reads_share_the_log_safely(cockpit, towns):
     with concurrent.futures.ThreadPoolExecutor(12) as pool:
         statuses = list(pool.map(lambda route: request(base + route)[0], routes))
     assert statuses == [200] * len(routes)
+
+
+def test_monitor_uses_recent_events_and_retains_task_history(cockpit):
+    state, base, _ = cockpit
+    from pangenome_town.exchange import Envelope
+
+    question = Envelope.new('question', 'ubar', 'yamatai', {'text': 'Inspect this region'})
+    state.log.record(question, town='yamatai', direction='received', status='received')
+    state.log.event('yamatai', 'dispatched', question.id, {'detail': 'worker assigned'})
+    state.log.set_status(question.id, 'dispatched')
+    for i in range(1100):
+        state.log.event('ubar', 'noise', detail={'i': i})
+    newest = state.log.event('yamatai', 'cockpit_action', detail={'ok': True})
+    _, view = request(base + '/api/monitor')
+    assert view['events'][-1]['seq'] == newest == view['cursor']
+    assert len(view['events']) == 300
+    task = next(m for m in view['messages'] if m['id'] == question.id)
+    assert task['stage'] == 'queued'
+    assert task['trail'][-1]['kind'] == 'dispatched'
+    answer = Envelope.new('answer', 'yamatai', 'ubar', {'text': 'Done'}, in_reply_to=question.id)
+    state.log.record(answer, town='ubar', direction='received', status='received')
+    _, view = request(base + '/api/monitor')
+    task = next(m for m in view['messages'] if m['id'] == question.id)
+    assert task['stage'] == 'completed' and task['answers'][0]['id'] == answer.id
+
+
+def test_monitor_distinguishes_queued_rcp_from_execution(cockpit):
+    state, base, _ = cockpit
+    from pangenome_town.exchange import Envelope
+
+    question = Envelope.new('question', 'ubar', 'yamatai', {})
+    state.log.record(question, town='yamatai', direction='received', status='rcp-working')
+    state.log.set_rcp(question.id, {'state': 'working', 'message': 'queued for the rigger (compute agent)'})
+    assert request(base + '/api/monitor')[1]['messages'][0]['stage'] == 'queued'
+    state.log.set_rcp(question.id, {'state': 'working', 'message': 'executing variants (inline)'})
+    assert request(base + '/api/monitor')[1]['messages'][0]['stage'] == 'working'
+
+
+def test_stream_reconnect_uses_last_event_id(cockpit):
+    state, base, _ = cockpit
+    first = state.log.event('ubar', 'received')
+    second = state.log.event('ubar', 'dispatched')
+    req = urllib.request.Request(base + '/api/events/stream?after=0', headers={'Last-Event-ID': str(first)})
+    with urllib.request.urlopen(req, timeout=5) as response:
+        assert response.readline().decode().strip() == f'id: {second}'
+
+
+def test_monitor_accepts_invalid_task_documents(cockpit):
+    state, base, _ = cockpit
+    from pangenome_town.exchange import Envelope
+
+    question = Envelope.new('question', 'ubar', 'yamatai', {})
+    state.log.record(question, town='yamatai', direction='received', status='rcp-rejected')
+    state.log.set_rcp(question.id, {'state': 'rejected', 'task': ['invalid', 'document']})
+    status, data = request(base + '/api/monitor')
+    assert status == 200 and data['messages'][0]['stage'] == 'rejected'

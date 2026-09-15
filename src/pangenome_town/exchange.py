@@ -300,6 +300,15 @@ class ExchangeLog:
         ).fetchall()
         return [_message_row(row) for row in rows]
 
+    def recent_events(self, limit: int = 300, message_id: str | None = None) -> list[dict[str, Any]]:
+        """Return the newest window, in sequence order (not the oldest page)."""
+        where = "WHERE message_id = ?" if message_id else ""
+        params = (message_id, limit) if message_id else (limit,)
+        rows = self._connection.execute(
+            f"SELECT * FROM events {where} ORDER BY seq DESC LIMIT ?", params
+        ).fetchall()
+        return [_event_row(row) for row in reversed(rows)]
+
     def pending_questions(self, town: str) -> list[dict[str, Any]]:
         """Questions addressed to `town` that were received but not yet dispatched to an agent."""
         rows = self._connection.execute(

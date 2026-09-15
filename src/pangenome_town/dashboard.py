@@ -95,6 +95,7 @@ class DashboardState:
         self.supervisor_url = towns[0].supervisor_url.rstrip("/")
         self.lock = threading.RLock()
         self.log = _LockedLog(ExchangeLog(towns[0].exchange_db), self.lock)
+        self._federation_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._sites_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._agentsview_cache: tuple[float, dict[str, Any]] | None = None
         self._mail_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -142,6 +143,49 @@ class DashboardState:
                 "costs": opencode_costs_for_dir(town.city_root / "rig"),
             })
         return result
+
+    def federation(self) -> dict[str, Any]:
+        """Public discovery only; never expose private bridge credentials or consume mail."""
+        relays = []
+        peers = {}
+        now = time.time()
+        for town in self.towns.values():
+            directory = (town.extra.get("federation") or {}).get("state")
+            if not directory:
+                continue
+            private = _read_json(Path(directory).expanduser() / "town.json") or {}
+            hub = str(private.get("hub") or "").rstrip("/")
+            if not hub.startswith("https://") or any(r["url"] == hub for r in relays):
+                continue
+            cached = self._federation_cache.get(hub)
+            if not cached or now - cached[0] >= 10:
+                document = _get_json(hub + "/.well-known/wasteland.json", timeout=3)
+                valid = isinstance(document, dict) and isinstance(document.get("towns"), list)
+                entry = {"url": hub, "ok": valid, "towns": document["towns"] if valid else (cached[1]["towns"] if cached else [])}
+                self._federation_cache[hub] = (now, entry)
+            entry = self._federation_cache[hub][1]
+            relays.append({"url": hub, "ok": entry["ok"]})
+            for item in entry["towns"]:
+                if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                    continue
+                name = item["name"]
+                if name in self.towns:
+                    continue
+                try:
+                    seen = _epoch(str(item.get("last_seen") or ""))
+                except ValueError:
+                    seen = 0
+                peers[name] = {"name": name, "display": str(item.get("display") or name), "kind": "federated",
+                               "last_seen": item.get("last_seen"), "recently_seen": bool(entry["ok"] and seen and now - seen < 120),
+                               "discovery_ok": entry["ok"], "relay": hub,
+                               "capabilities": item.get("capabilities") if isinstance(item.get("capabilities"), list) else []}
+        # Historical exchanges remain visible even during outages or after a peer leaves.
+        for message in self.log.list(limit=400):
+            for name in (message["from"], message["to"]):
+                if name not in self.towns and name not in {"human", "external"}:
+                    peers.setdefault(name, {"name": name, "display": name, "kind": "federated", "last_seen": None,
+                                            "recently_seen": False, "discovery_ok": False, "capabilities": [], "relay": None})
+        return {"towns": sorted(peers.values(), key=lambda p: (not p["recently_seen"], p["name"])), "relays": relays}
 
     # Exchanges ------------------------------------------------------------------------
     def exchanges(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -548,26 +592,79 @@ class DashboardState:
         self._agentsview_cache = (now, payload)
         return payload
 
+    def resource_catalog(self):
+        from .resources import listing
+        return {"resources": [item for town in self.towns.values() for item in listing(town)]}
+
+    def dataset_catalog(self):
+        from .compute.delegation import catalog
+        datasets = {}
+        for town in self.towns.values():
+            for identifier, data in catalog(town).items():
+                datasets.setdefault(identifier, {"id": identifier, "custodian": data["custodian"],
+                    "samples": data["samples"], "version": data["version"], "manifest": data["manifest"],
+                    "storage": sorted(data["locations"]), "workflows": data["workflows"], "executors": []})
+                from .compute.sites import load_sites
+                datasets[identifier]["executors"].extend({"town": town.name, "site": site.name, "scheduler": site.scheduler}
+                    for site in load_sites(town) if site.enabled and site.storage in data["locations"])
+        return {"datasets": list(datasets.values())}
+
     def monitor(self) -> dict[str, Any]:
         messages = []
         for message in self.log.list(limit=400):
             rcp = message.get("rcp") or {}
             refusal = rcp.get("refusal") or {}
             body = message["envelope"]["body"]
+            task_document = rcp.get("task") if isinstance(rcp.get("task"), dict) else {}
+            trail = self.log.recent_events(limit=80, message_id=message["id"])
+            answers = self.log.answers(message["id"]) if message["kind"] == "question" else []
+            explanation = rcp.get("message") or next(
+                (e["detail"]["message"] for e in reversed(trail) if e["detail"].get("message")), None)
+            stage = rcp.get("state") or message["status"]
+            if not rcp and answers:
+                stage = "failed" if answers[-1]["envelope"]["body"].get("ok") is False else "completed"
+                explanation = explanation or answers[-1]["envelope"]["body"].get("error")
+            elif stage == "working" and str(explanation or "").startswith("queued"):
+                stage = "queued"
+            elif not rcp:
+                stage = {"answered": "completed", "dispatched": "queued", "received": "queued",
+                         "sent": "submitted", "delivered": "queued", "delivery_failed": "failed"}.get(stage, stage)
+            delegation_task = body.get("task") if body.get("operation") == "delegated-compute" else None
+            delegation_events = [e for e in trail if e["kind"].startswith("delegation_")]
+            if isinstance(delegation_task, dict):
+                task_document = {"@id": delegation_task.get("id")}
+                if delegation_events:
+                    latest = delegation_events[-1]
+                    phase = latest["detail"].get("phase")
+                    stage = {"permission_required": "input-required", "rejected": "rejected", "failed": "failed",
+                             "released": "completed", "replayed": "completed", "execution_started": "working", "authorized": "queued"}.get(phase, stage)
+                    if phase == "scheduler":
+                        stage = "working" if latest["detail"].get("status") == "RUNNING" else "queued"
+                    explanation = latest["detail"].get("message") or explanation
+                if answers:
+                    response_body = answers[-1]["envelope"]["body"]
+                    stage = response_body.get("state") or stage
+                    explanation = response_body.get("error") or explanation
             messages.append({
                 "id": message["id"], "from": message["from"], "to": message["to"], "kind": message["kind"], "created": message["created"],
-                "status": message["status"], "rcp": bool(rcp), "state": rcp.get("state"), "task": str(body.get("rcp_task_type") or "").rsplit("/", 1)[-1],
+                "status": message["status"], "rcp": bool(rcp), "state": rcp.get("state"), "task": str((delegation_task or {}).get("workflow") or body.get("rcp_task_type") or body.get("operation") or "").rsplit("/", 1)[-1],
                 "gates": rcp.get("gates"), "refusal_gate": refusal.get("gate"), "refusal_reason": refusal.get("reason"),
-                "region": body.get("region"), "text": str(body.get("text") or "")[:180],
+                "region": (delegation_task or {}).get("region") or body.get("region"), "text": str(body.get("text") or body.get("error") or body.get("operation") or "")[:180],
+                "stage": stage, "message": explanation, "delegation": delegation_task,
+                "in_reply_to": message["in_reply_to"],
+                "context_id": (delegation_task or {}).get("id") or rcp.get("context_id"), "task_id": task_document.get("@id"),
+                "updated": trail[-1]["ts"] if trail else message["created"], "trail": trail,
+                "answers": [{"id": a["id"], "from": a["from"], "to": a["to"], "created": a["created"]} for a in answers],
             })
-        events = [event for event in self.log.events(None, limit=1000)
-                  if event.get("kind") in AUTHORITY_EVENTS | {"cockpit_action", "rcp_stamped"}]
+        events = self.log.recent_events(limit=300)
         nodes = [{"id": name, "display": town.display, "kind": town.kind} for name, town in self.towns.items()]
+        nodes.extend({"id": peer["name"], "display": peer["display"], "kind": "federated"} for peer in self.federation()["towns"])
         sites = []
         for entry in self.sites()["towns"]:
             for site in entry.get("sites") or []:
                 sites.append({"town": entry["town"], "site": site.get("site"), "reachable": site.get("reachable"), "driver": site.get("driver")})
-        return {"now": time.time(), "nodes": nodes, "sites": sites, "messages": messages, "events": events[-300:]}
+        return {"now": time.time(), "nodes": nodes, "sites": sites, "messages": messages, "events": events,
+                "message_limit": 400, "event_limit": 300, "cursor": events[-1]["seq"] if events else 0}
 
     def events_since(self, after: int, limit: int = 200) -> list[dict[str, Any]]:
         return self.log.events(None, limit=limit, after=after)
@@ -732,8 +829,24 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 if route == "/":
                     page = HTML_PATH.read_text(encoding="utf-8").replace("__COCKPIT_TOKEN__", state.token).replace("__AGENTSVIEW_URL__", state.agentsview_url)
                     self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8")
+                elif route == "/api/resources":
+                    self._json(HTTPStatus.OK, state.resource_catalog())
+                elif route == "/api/datasets":
+                    self._json(HTTPStatus.OK, state.dataset_catalog())
+                elif route.startswith("/api/resources/"):
+                    from .resources import read
+                    town_name, identifier = route[len("/api/resources/"):].split("/", 1)
+                    content, _metadata = read(state._town(town_name), identifier)
+                    # Serve documents as downloads; do not execute active content in cockpit origin.
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition", "attachment")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
                 elif route == "/api/towns":
-                    self._json(HTTPStatus.OK, {"towns": state.towns_view(), "supervisor": state.supervisor_url})
+                    self._json(HTTPStatus.OK, {"towns": state.towns_view(), "supervisor": state.supervisor_url, "federation": state.federation()})
                 elif route == "/api/exchanges":
                     limit = min(int(query.get("limit", ["100"])[0]), 500)
                     self._json(HTTPStatus.OK, {"exchanges": state.exchanges(limit)})
@@ -767,7 +880,7 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                     after = int(query.get("after", ["0"])[0])
                     self._json(HTTPStatus.OK, {"events": state.events_since(after)})
                 elif route == "/api/events/stream":
-                    self._stream(int(query.get("after", ["0"])[0]))
+                    self._stream(int(self.headers.get("Last-Event-ID") or query.get("after", ["0"])[0]))
                 elif route == "/healthz":
                     self._json(HTTPStatus.OK, {"ok": True})
                 else:
