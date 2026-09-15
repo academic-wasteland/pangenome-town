@@ -304,7 +304,21 @@ def test_registrar_http_over_unix_socket(tmp_path):
         assert _call(sock, "POST", "/v0/applications", {**application, "issuer": "nobody"})[0] == 422
         assert _call(sock, "POST", "/v0/applications", {**application, "extra": 1})[0] == 422
         assert _call(sock, "POST", "/v0/applications", {**application, "holder": 5})[0] == 422
-        assert _call(sock, "POST", "/v0/approve", application)[0] == 404
+        # Delay the body after sending headers to exercise early-close races.
+        import time
+
+        class SlowBodyConnection(_UnixConnection):
+            def send(self, data):
+                if isinstance(data, bytes) and data.startswith(b"{"):
+                    time.sleep(0.05)
+                return super().send(data)
+
+        unknown = SlowBodyConnection(str(sock))
+        unknown.request("POST", "/v0/approve", body=json.dumps(application).encode())
+        response = unknown.getresponse()
+        assert response.status == 404
+        response.read()
+        unknown.close()
         issued = registry.approve(created["id"], decided_by="operator")
         token = issued["id"].rsplit("/", 1)[1]
         assert _call(sock, "GET", f"/v0/status/{token}")[1]["status"] == "active"

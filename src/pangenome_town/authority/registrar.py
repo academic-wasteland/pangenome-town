@@ -345,10 +345,15 @@ def make_handler(registry: Registry) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             route = urllib.parse.urlparse(self.path).path.rstrip("/")
+            length = int(self.headers.get("Content-Length") or 0)
             if route != "/v0/applications":
+                # Consume bounded request bodies before closing the socket;
+                # otherwise clients can get BrokenPipe while sending the body
+                # instead of receiving this 404 (especially over Unix sockets).
+                if 0 < length <= MAX_APPLICATION_BYTES:
+                    self.rfile.read(length)
                 self._json(HTTPStatus.NOT_FOUND, {"error": "no such route"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
             if length <= 0 or length > MAX_APPLICATION_BYTES:
                 self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body missing or too large"})
                 return
