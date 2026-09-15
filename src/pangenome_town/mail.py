@@ -6,6 +6,9 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 from .config import TownConfig
@@ -92,4 +95,20 @@ def send_to_resident(town: TownConfig, envelope: Envelope, resident: str) -> dic
         raise MailError('Gas City did not return a JSON delivery receipt; check PT_GC_BIN') from None
     if result.returncode or not isinstance(receipt, dict) or receipt.get('ok') is not True or not receipt.get('id'):
         raise MailError('Gas City did not confirm resident delivery')
+    if resident in {"q", "bloodninja"}:
+        # ACP connections belong to the supervisor process. A standalone gc
+        # notification can queue mail without waking an otherwise idle agent.
+        url = (town.supervisor_url.rstrip("/") + "/v0/city/"
+               + urllib.parse.quote(town.name, safe="") + "/session/"
+               + urllib.parse.quote(resident, safe="") + "/submit")
+        request = urllib.request.Request(url, data=json.dumps({
+            "message": "You have new mail. Run gc mail check, read the unread message, and reply using its instructions.",
+            "intent": "default",
+        }).encode(), headers={"Content-Type": "application/json", "X-GC-Request": "resident-mail"})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                receipt["wake_requested"] = response.status == 202
+        except (urllib.error.URLError, OSError, TimeoutError):
+            # Mail is already durable. Do not ask the bridge to redeliver it.
+            receipt["wake_requested"] = False
     return receipt

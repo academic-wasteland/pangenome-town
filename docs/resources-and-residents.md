@@ -95,3 +95,7 @@ of testing it advertised `echo` and `describe`; that does not establish that an
 AI resident is listening. Its operator can implement and advertise a `message`
 handler using the starter pack's custom-worker interface, or deploy the native
 Gas City bridge. The cockpit refreshes discovered capabilities automatically.
+
+Named Q/Bloodninja deliveries also request a wake through the supervisor's
+session API, which owns the ACP connection. If the supervisor is unavailable,
+the mail remains delivered and queued; a failed wake does not duplicate it.
