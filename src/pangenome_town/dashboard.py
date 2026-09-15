@@ -15,7 +15,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -30,7 +29,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from . import config
+from . import config, mail
 from .exchange import ExchangeLog
 
 DEFAULT_BIND = "127.0.0.1"
@@ -451,7 +450,7 @@ class DashboardState:
         return town
 
     def _gc(self, town: config.TownConfig, subcommand: list[str], flags: list[str], positionals: list[str], *, timeout: float = 60) -> dict[str, Any]:
-        gc = os.environ.get("PT_GC_BIN") or shutil.which("gc") or str(Path.home() / ".local/bin/gc")
+        gc = mail.gc_binary()
         argv = [gc, *subcommand, "--city", str(town.city_root), *flags, "--", *positionals]
         env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
         try:
@@ -477,7 +476,7 @@ class DashboardState:
         cached = self._mail_cache.get(town.name)
         if cached and time.time() - cached[0] < 5:
             return cached[1]
-        gc = os.environ.get("PT_GC_BIN") or shutil.which("gc") or str(Path.home() / ".local/bin/gc")
+        gc = mail.gc_binary()
         env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
         try:
             result = self.runner([gc, "bd", "list", "--city", str(town.city_root), "--type", "message", "--json", "--all", "--limit", "300"],
@@ -496,7 +495,7 @@ class DashboardState:
             labels = item.get("labels") or []
             messages.append({
                 "id": item.get("id"), "subject": item.get("title"), "body": item.get("description"),
-                "from": metadata.get("mail.from_display") or item.get("sender"), "to": item.get("assignee"),
+                "from": metadata.get("mail.from_display") or item.get("sender") or item.get("from"), "to": item.get("assignee"),
                 "created_at": item.get("created_at"), "read": "read" in labels or metadata.get("mail.read") == "true",
                 "thread_id": next((label.split(":", 1)[1] for label in labels if isinstance(label, str) and label.startswith("thread:")), None),
                 "archived": item.get("status") == "closed",
@@ -508,17 +507,49 @@ class DashboardState:
     def mail_list(self, town_name: Any) -> dict[str, Any]:
         town = self._town(town_name)
         messages = self._mail_beads(town)
-        if messages is not None:
-            return {"town": town.name, "messages": messages[:200], "source": "beads", "error": None}
-        data = self.supervisor(f"/v0/city/{town.name}/mail?status=all", timeout=4)
-        items = data.get("items") if isinstance(data, dict) else None
-        messages = sorted(items or [], key=lambda item: str(item.get("created_at") or ""), reverse=True)[:200]
-        return {"town": town.name, "messages": messages, "source": "supervisor",
-                "error": data.get("error") if isinstance(data, dict) and items is None else None}
+        error = None
+        if messages is None:
+            data = self.supervisor(f"/v0/city/{town.name}/mail?status=all", timeout=4)
+            messages = data.get("items") or [] if isinstance(data, dict) else []
+            error = data.get("error") if isinstance(data, dict) else None
+        messages = list(messages)
+        for entry in self.log.list(town=town.name, limit=200):
+            if "human" not in {entry["from"], entry["to"]}:
+                continue
+            body = entry["envelope"]["body"]
+            if body.get("resident") != "contact":
+                continue
+            messages.append({"id": entry["id"], "from": entry["from"], "to": entry["to"],
+                             "subject": "General contact" + (" reply" if entry["kind"] == "answer" else ""),
+                             "body": body.get("text", ""), "created_at": entry["created"], "read": True,
+                             "thread_id": entry["in_reply_to"] or entry["id"], "source": "contact"})
+        messages.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return {"town": town.name, "messages": messages[:200], "source": "mail-and-contact", "error": error}
 
     def act(self, action: str, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
+        if action == "contacts/send":
+            destination = _name(payload.get("to"), "destination town")
+            if destination not in self.towns:
+                return self.act("peers/send", {**payload, "resident": payload.get("resident") or None})
+            target = self._town(destination)
+            resident = payload.get("resident") or "contact"
+            if payload.get("operation", "message") != "message":
+                raise ActionError("choose message for a local town")
+            message = _text(payload.get("body"), "message", 8000)
+            if resident == "contact":
+                from .contacts import directory
+                answer = directory(target)
+                from .exchange import Envelope
+                question = Envelope.new("question", "human", destination, {"operation": "message", "resident": "contact", "text": message})
+                response = Envelope.new("answer", destination, "human", answer, in_reply_to=question.id)
+                self.log.record(question, town=destination, direction="received", status="answered")
+                self.log.record(response, town=destination, direction="sent", status="sent")
+                self.log.event(destination, "general_contact_answered", question.id, {"resident": "contact"})
+                return {"ok": True, "route": "mail", "town": destination, "id": response.id, "text": answer["text"]}
+            result = self.act("mail/send", {"town": destination, "to": resident, "subject": payload.get("subject") or "Message from human", "body": message})
+            return {**result, "route": "mail", "town": destination}
         town = self._town(payload.get("town"))
         self._mail_cache.pop(town.name, None)
         if action == "peers/send":
@@ -546,10 +577,15 @@ class DashboardState:
             self._record_action(town, "peer_send", {"to": recipient, "operation": operation, "id": envelope.id})
         elif action == "mail/send":
             to = _name(payload.get("to"), "to")
-            subject = _text(payload.get("subject"), "subject", 200)
+            subject = _text(payload.get("subject") or "Message from human", "subject", 200)
             body = _text(payload.get("body"), "body", 8000)
             flags = ["--from", "human", "--to", to, "-s", subject, "-m", body, "--json"] + (["--notify"] if payload.get("notify", True) else [])
             result = self._gc(town, ["mail", "send"], flags, [])
+            receipt = result.get("json") or {}
+            if result["ok"] and not (receipt.get("ok") is True and receipt.get("id")):
+                result = {"ok": False, "error": "Gas City did not confirm mail delivery; check the gc executable"}
+            if result["ok"] and payload.get("notify", True) and to not in {"human", "contact"}:
+                result["wake_requested"] = mail.wake_resident(town, to)
             self._record_action(town, "mail_send", {"to": to, "subject": subject[:120], "ok": result["ok"]})
         elif action == "mail/reply":
             message = _name(payload.get("id"), "id")

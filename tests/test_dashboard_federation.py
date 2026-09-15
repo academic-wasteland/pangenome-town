@@ -105,3 +105,33 @@ def test_external_contact_uses_local_identity_and_advertised_operations(towns, m
     assert sent[-1].body == {'operation': 'describe'}
     assert len(sent) == 2
     state.log.close()
+
+
+def test_human_can_contact_local_town_and_named_resident(towns, monkeypatch):
+    state = dashboard.DashboardState([towns['ubar']])
+    monkeypatch.setattr(state, '_mail_beads', lambda town: [])
+    answer = state.act('contacts/send', {'to': 'ubar', 'operation': 'message', 'body': 'Who is here?'})
+    assert answer['ok'] and 'automated general contact' in answer['text']
+    messages = state.mail_list('ubar')['messages']
+    assert len(messages) == 2 and {m['from'] for m in messages} == {'human', 'ubar'}
+    assert any(m['to'] == 'human' and 'Welcome' in m['body'] for m in messages)
+    calls = []
+    def gc(town, subcommand, flags, positionals, **kwargs):
+        calls.append(flags)
+        return {'ok': True, 'json': {'ok': True, 'id': 'mail-1'}}
+    monkeypatch.setattr(state, '_gc', gc)
+    monkeypatch.setattr(dashboard.mail, 'wake_resident', lambda town, resident: resident == 'q')
+    sent = state.act('contacts/send', {'to': 'ubar', 'resident': 'q', 'body': 'Hello Q'})
+    assert sent['ok'] and sent['wake_requested']
+    assert calls[0][calls[0].index('--from')+1] == 'human'
+    assert calls[0][calls[0].index('--to')+1] == 'q'
+    assert 'Message from human' in calls[0]
+    state.log.close()
+
+
+def test_mail_rejects_success_without_gas_city_receipt(towns, monkeypatch):
+    state = dashboard.DashboardState([towns['ubar']])
+    monkeypatch.setattr(state, '_gc', lambda *a, **kw: {'ok': True, 'json': None})
+    result = state.act('mail/send', {'town': 'ubar', 'to': 'q', 'body': 'hello'})
+    assert not result['ok'] and 'confirm' in result['error']
+    state.log.close()

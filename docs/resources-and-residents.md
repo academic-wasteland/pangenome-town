@@ -82,8 +82,10 @@ the generic research dispatcher can turn them into scientific workflows.
 
 ## Contact an external town
 
-In Cockpit → Network, select **Contact town** on a discovered town, or open
-**Mail & residents → Contact an external town**. Choose the local sending town
+In Cockpit → Network, select **Contact town**, or open
+**Mail & residents → Compose a message**. You compose as the human operator;
+select any local or discovered external destination, then **General contact**
+or a named resident. Choose the local sending town
 and one of the destination's advertised contact operations. **Describe** asks
 what it provides; **echo** automatically repeats your text; **message** contacts
 a resident only when the destination advertises that handler. An optional
@@ -99,3 +101,17 @@ Gas City bridge. The cockpit refreshes discovered capabilities automatically.
 Named Q/Bloodninja deliveries also request a wake through the supervisor's
 session API, which owns the ACP connection. If the supervisor is unavailable,
 the mail remains delivered and queued; a failed wake does not duplicate it.
+
+
+Local general contacts return an automated directory answer immediately. Both
+sides appear in the town's Mail list; they are stored in the cockpit exchange
+log rather than an invented Gas City mailbox. Named residents receive actual
+Gas City mail from `human`, with a default subject and a supervisor wake request.
+Their replies return to the human mailbox. The optional advanced form accepts
+raw local session/mailbox addresses. The executable is resolved to the user's
+installed Gas City binary before considering system `gc` (which may be Graphviz).
+
+External messages travel through the selected local town's authenticated relay
+identity. Only advertised contact operations are offered. Robert's native towns
+now answer general-contact messages directly and advertise their public residents;
+unknown public resident names are refused instead of being sent to research agents.

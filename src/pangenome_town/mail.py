@@ -9,6 +9,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from .config import TownConfig
@@ -22,7 +23,7 @@ class MailError(RuntimeError):
 
 
 def gc_binary() -> str:
-    path = os.environ.get("PT_GC_BIN") or shutil.which("gc")
+    path = os.environ.get("PT_GC_BIN") or (str(Path.home() / ".local/bin/gc") if (Path.home() / ".local/bin/gc").is_file() else shutil.which("gc"))
     if not path:
         raise MailError("gc binary not found on PATH (set PT_GC_BIN)")
     return path
@@ -98,17 +99,22 @@ def send_to_resident(town: TownConfig, envelope: Envelope, resident: str) -> dic
     if resident in {"q", "bloodninja"}:
         # ACP connections belong to the supervisor process. A standalone gc
         # notification can queue mail without waking an otherwise idle agent.
-        url = (town.supervisor_url.rstrip("/") + "/v0/city/"
-               + urllib.parse.quote(town.name, safe="") + "/session/"
-               + urllib.parse.quote(resident, safe="") + "/submit")
-        request = urllib.request.Request(url, data=json.dumps({
-            "message": "You have new mail. Run gc mail check, read the unread message, and reply using its instructions.",
-            "intent": "default",
-        }).encode(), headers={"Content-Type": "application/json", "X-GC-Request": "resident-mail"})
-        try:
-            with urllib.request.urlopen(request, timeout=5) as response:
-                receipt["wake_requested"] = response.status == 202
-        except (urllib.error.URLError, OSError, TimeoutError):
-            # Mail is already durable. Do not ask the bridge to redeliver it.
-            receipt["wake_requested"] = False
+        receipt["wake_requested"] = wake_resident(town, resident)
     return receipt
+
+
+def wake_resident(town, resident):
+    """Request a prompt through the process that owns the resident connection."""
+    url = (town.supervisor_url.rstrip("/") + "/v0/city/"
+           + urllib.parse.quote(town.name, safe="") + "/session/"
+           + urllib.parse.quote(resident, safe="") + "/submit")
+    request = urllib.request.Request(url, data=json.dumps({
+        "message": "You have new mail. Run gc mail check, read the unread message, and reply using its instructions.",
+        "intent": "default",
+    }).encode(), headers={"Content-Type": "application/json", "X-GC-Request": "resident-mail"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status == 202
+    except (urllib.error.URLError, OSError, TimeoutError):
+        # Mail is already durable. Do not ask the bridge to redeliver it.
+        return False
