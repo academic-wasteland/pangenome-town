@@ -596,7 +596,11 @@ class DashboardState:
         elif action == "mail/reply":
             message = _name(payload.get("id"), "id")
             body = _text(payload.get("body"), "body", 8000)
+            original = next((item for item in self.mail_list(town.name)["messages"] if item["id"] == message), None)
             result = self._gc(town, ["mail", "reply"], ["-m", body, "--json", "--notify"], [message])
+            if result["ok"] and original and original.get("from") not in {None, "human"}:
+                result["wake_requested"] = mail.wake_resident(town, original["from"])
+            self._mail_cache.pop(town.name, None)
             self._record_action(town, "mail_reply", {"id": message, "ok": result["ok"]})
         elif action == "mail/mark":
             message = _name(payload.get("id"), "id")
