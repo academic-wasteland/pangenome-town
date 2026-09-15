@@ -101,6 +101,8 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--holder-slug", help="holder wallet name under ~/.gc/holders (default: derived from --holder)")
     submit.add_argument("--credential", action="append", default=[], type=Path, help="credential file to present (default: the whole wallet)")
     submit.add_argument("--registrar", help="registrar URL to fetch accreditations from (default: [trust].registrar)")
+    submit.add_argument("--identity-token", action="append", default=[], type=Path, help="private JSON file with issuer and token")
+    submit.add_argument("--accreditation", action="append", default=[], type=Path, help="signed accreditation file from any provider")
     submit.add_argument("--follow-referrals", action="store_true", help="resubmit once to a town the refusal refers to")
     get = rcp_commands.add_parser("get", help="fetch a task from a peer town (tasks/get)")
     get.add_argument("--to", required=True)
@@ -134,6 +136,10 @@ def parser() -> argparse.ArgumentParser:
     accredit.add_argument("--subject", required=True)
     accredit.add_argument("--roles", nargs="+", required=True)
     accredit.add_argument("--valid-days", type=int, default=365)
+    accredit.add_argument("--types", nargs="+", default=[])
+    accredit.add_argument("--scopes", nargs="+", default=[])
+    accredit.add_argument("--datasets", nargs="+", default=[])
+    accredit.add_argument("--delegation-depth", type=int, default=0)
     authority_commands.add_parser("issuers", help="list issuers with keys and accreditations")
     applications = authority_commands.add_parser("applications", help="list applications")
     applications.add_argument("--state", choices=["pending", "approved", "denied"])
@@ -166,11 +172,13 @@ def parser() -> argparse.ArgumentParser:
         if name in {"apply", "fetch"}:
             sub.add_argument("--registrar", help="registrar URL (default: [trust].registrar)")
         if name == "apply":
-            sub.add_argument("--type", required=True, choices=["DataAccessAuthorization", "EthicsApproval"])
+            sub.add_argument("--type", required=True, choices=["DataAccessAuthorization", "EthicsApproval", "Qualification", "ComputeAuthorization", "HumanDelegation"])
             sub.add_argument("--issuer", required=True, help="issuer slug, e.g. ubar-dac")
             sub.add_argument("--scope", required=True, help="scope class IRI from the town's scope library")
             sub.add_argument("--dataset")
             sub.add_argument("--protocol")
+            sub.add_argument("--task", type=Path, help="bind permission to this exact task JSON")
+            sub.add_argument("--audience", help="receiving town IRI for exact-task permission")
             sub.add_argument("--purpose", required=True)
             sub.add_argument("--dry-run", action="store_true")
         if name == "fetch":
@@ -448,7 +456,9 @@ def _author_task(arguments: argparse.Namespace, town: config.TownConfig, target:
 
         registrar_url = arguments.registrar or (town.extra.get("trust") or {}).get("registrar")
         presentation = build_presentation(peer_town, document, holder=arguments.holder, slug=arguments.holder_slug,
-                                          credential_files=list(arguments.credential), registrar_url=registrar_url)
+                                          credential_files=list(arguments.credential), registrar_url=registrar_url,
+                                          identity_tokens=[json.loads(p.read_text()) for p in arguments.identity_token],
+                                          accreditation_files=arguments.accreditation)
     return document, presentation
 
 

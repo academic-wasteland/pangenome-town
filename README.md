@@ -212,3 +212,7 @@ Everything binds to loopback or unix sockets. The supervisor's service proxy
 has no authentication, so never expose port 8372 beyond localhost without a
 reverse proxy. Envelope bodies are size-limited and treated as untrusted
 data; the agent prompt says so explicitly.
+
+Independent providers and agent certification: see [the trust model, configuration,
+and Keycloak integration](docs/federated-certification.md), the [executable demos](docs/demos/certification.md),
+and [external-town discovery and Zerzura contact](docs/discovering-towns.md).

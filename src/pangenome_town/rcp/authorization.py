@@ -74,6 +74,7 @@ class AuthorityFacts:
     edges: list[tuple[str, str]]
     axioms: list[str]
     probes: list[tuple[str, ...]]
+    certification: dict | None = None
 
     def verified(self) -> list[CredentialFacts]:
         return [item for item in self.credentials if item.verified]
@@ -81,7 +82,7 @@ class AuthorityFacts:
     def as_dict(self) -> dict[str, Any]:
         return {"presented": self.presented, "ok": self.ok, "holder": self.holder, "problems": self.problems,
                 "credentials": [item.as_dict() for item in self.credentials],
-                "accreditation_edges": [list(edge) for edge in self.edges]}
+                "accreditation_edges": [list(edge) for edge in self.edges], "certification": self.certification}
 
 
 def settings(town: TownConfig) -> dict[str, Any]:
@@ -92,6 +93,9 @@ def settings(town: TownConfig) -> dict[str, Any]:
     return {
         "anchors": contract.trust_anchors(town),
         "registrar": trust.get("registrar"),
+        "registrars": trust.get("registrars", {}),
+        "certification": trust.get("certification"),
+        "identity_providers": trust.get("identity_providers", {}),
         "revocation": revocation,
         "max_age_seconds": int(trust.get("presentation_max_age_seconds", 900)),
     }
@@ -129,9 +133,16 @@ def assess(
             axioms_out.append(ax.class_assertion(ax.complement(f"{town_base}ServedRestrictedDataset"), dataset))
     nothing_presented = ax.class_assertion(ax.only(f"{CRED}presents", ax.NOTHING), task_id)
 
+    certification_result = None
+    if config["certification"] is not None:
+        from ..authority import certification, identity
+        certification_result = certification.evaluate(
+            config["certification"], task, presentation, audience=town_iri(town.name),
+            anchors=config["anchors"], directory=directory, status_checker=status_checker, now=now,
+            identity_checker=identity.checker(config["identity_providers"]))
     if not presentation:
         axioms_out.append(nothing_presented)
-        return AuthorityFacts(False, False, None, [], [], [], axioms_out, [])
+        return AuthorityFacts(False, False, None, [], [], [], axioms_out, [], certification_result)
 
     result = creds.verify_presentation(
         presentation, task, audience=town_iri(town.name), anchors=config["anchors"], directory=directory,
@@ -168,6 +179,12 @@ def assess(
         facts.append(item)
         if not verified:
             continue
+        if certification_result:
+            for decision in certification_result['requirements']:
+                if decision['status'] == 'pass' and decision['evidence']['credential'] == check.id:
+                    vetted = HOLDER_TYPES.get(decision['type'])
+                    if vetted:
+                        axioms_out.append(ax.class_assertion(f"{town_base}{vetted}", check.id))
         axioms_out.append(ax.class_assertion(f"{CRED}VerifiedCredential", check.id))
         for name in holder_types:
             axioms_out.append(ax.class_assertion(f"{CRED}{name}", check.id))
@@ -188,7 +205,7 @@ def assess(
         axioms_out.append(ax.property_assertion(f"{CRED}accreditedBy", subject, accreditor))
     if not presented_any:
         axioms_out.append(nothing_presented)
-    return AuthorityFacts(True, result.ok, result.holder, list(result.problems), facts, list(result.accreditation_edges), axioms_out, probes)
+    return AuthorityFacts(True, result.ok, result.holder, list(result.problems), facts, list(result.accreditation_edges), axioms_out, probes, certification_result)
 
 
 def credential_checks(facts: AuthorityFacts, checks: dict[str, str]) -> dict[str, dict[str, str | None]]:

@@ -87,6 +87,10 @@ def holder_command(arguments: Any, town: config.TownConfig) -> int:
     url = _registrar_url(town, arguments.registrar)
     if command == "apply":
         subject = {name: value for name, value in (("dataset", arguments.dataset), ("scope", arguments.scope), ("protocol", arguments.protocol)) if value}
+        if getattr(arguments, 'task', None):
+            if not arguments.audience:
+                raise ResourceCommandError('--task requires --audience')
+            subject.update(taskDigest=creds.task_digest(json.loads(arguments.task.read_text())), audience=arguments.audience)
         body = {"holder": arguments.holder, "holder_key": keys.public_key_text(key), "credential_type": arguments.type,
                 "issuer": arguments.issuer, "subject_fields": subject, "purpose": arguments.purpose}
         if arguments.dry_run:
@@ -112,7 +116,8 @@ def holder_command(arguments: Any, town: config.TownConfig) -> int:
 
 
 def build_presentation(peer: config.TownConfig, task: dict[str, Any], *, holder: str, slug: str | None, credential_files: list[Path],
-                       registrar_url: str | None) -> dict[str, Any]:
+                       registrar_url: str | None, identity_tokens: list[dict] | None = None,
+                       accreditation_files: list[Path] | None = None) -> dict[str, Any]:
     from .rcp import town_iri
 
     slug = slug or holder_slug(holder)
@@ -120,11 +125,12 @@ def build_presentation(peer: config.TownConfig, task: dict[str, Any], *, holder:
     key = keys.load_private(key_path)
     files = credential_files or sorted(wallet.glob("*.json"))
     documents = [json.loads(Path(path).read_text(encoding="utf-8")) for path in files]
-    if not documents:
+    if not documents and not identity_tokens:
         raise ResourceCommandError(f"no credentials in {wallet}; run `pangenome-town holder fetch` first")
     accreditations = registrar.http_accreditations(registrar_url) if registrar_url else []
+    accreditations.extend(json.loads(p.read_text()) for p in accreditation_files or [])
     return creds.present(holder=holder, holder_key=key, credentials=documents, accreditations=accreditations, task=task,
-                         audience=town_iri(peer.name))
+                         audience=town_iri(peer.name), identity_tokens=identity_tokens)
 
 
 # Authority (Camelot) -------------------------------------------------------------------------------
@@ -132,7 +138,7 @@ def registry_for(town: config.TownConfig, arguments: Any) -> registrar.Registry:
     settings = town.extra.get("authority") or {}
     root = Path(arguments.registry) if getattr(arguments, "registry", None) else town.city_root / str(settings.get("registry", "registry"))
     key_dir = Path(arguments.key_dir) if getattr(arguments, "key_dir", None) else Path(str(settings.get("key_dir", f"~/.gc/authority/{town.name}")))
-    return registrar.Registry(root, key_dir.expanduser())
+    return registrar.Registry(root, key_dir.expanduser(), namespace=settings.get("namespace", registrar.AUTHORITY))
 
 
 def _public_issuer(record: dict[str, Any]) -> dict[str, Any]:
@@ -155,7 +161,7 @@ def authority_card(town: config.TownConfig, registry: registrar.Registry, base_u
         "issuers": [_public_issuer(record) for record in registry.issuers()],
         "endpoints": {"keys": f"{base}/v0/keys", "applications": f"{base}/v0/applications", "credential": f"{base}/v0/credentials/{{id}}",
                       "status": f"{base}/v0/status/{{id}}"},
-        "iriBase": AUTHORITY,
+        "iriBase": registry.namespace,
         "decisions": "human approval required (pangenome-town authority approve|deny|revoke)",
         "town": {"name": town.name, "kind": town.kind, "peers": sorted(town.peers)},
     }
@@ -230,7 +236,9 @@ def authority_command(arguments: Any, town: config.TownConfig, log: ExchangeLog)
     if command == "init-issuer":
         _print(_public_issuer(registry.init_issuer(arguments.slug, arguments.name, arguments.role)))
     elif command == "accredit":
-        _print(registry.accredit(arguments.by, arguments.subject, list(arguments.roles), valid_days=arguments.valid_days))
+        _print(registry.accredit(arguments.by, arguments.subject, list(arguments.roles), valid_days=arguments.valid_days,
+                                 types=arguments.types, scopes=arguments.scopes, datasets=arguments.datasets,
+                                 delegation_depth=arguments.delegation_depth))
     elif command == "issuers":
         _print([_public_issuer(record) for record in registry.issuers()])
     elif command == "applications":

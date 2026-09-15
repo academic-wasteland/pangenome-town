@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-from . import AUTHORITY, CREDENTIAL_TYPES, issuer_iri
+from . import AUTHORITY, CREDENTIAL_TYPES
 from . import credentials as credmod
 from . import keys as keymod
 
@@ -59,7 +59,8 @@ def _token(credential_id: str) -> str:
 
 
 class Registry:
-    def __init__(self, root: Path, key_dir: Path):
+    def __init__(self, root: Path, key_dir: Path, *, namespace: str = AUTHORITY):
+        self.namespace = namespace.rstrip("/") + "/"
         self.root = Path(root)
         self.key_dir = Path(key_dir)
         for sub in ("issuers", "applications", "credentials"):
@@ -82,7 +83,7 @@ class Registry:
         key = keymod.load_private(key_path) if key_path.exists() else keymod.generate()
         if not key_path.exists():
             keymod.save_private(key, key_path)
-        record = {"id": issuer_iri(slug), "slug": slug, "name": name, "role": role,
+        record = {"id": f"{self.namespace}issuers/{slug}", "slug": slug, "name": name, "role": role,
                   "publicKey": keymod.public_key_text(key), "accreditations": []}
         _write(path, record)
         return record
@@ -103,7 +104,7 @@ class Registry:
     def directory(self) -> dict[str, str]:
         return {record["id"]: record["publicKey"] for record in self.issuers()}
 
-    def accredit(self, accreditor_slug: str, subject_slug: str, roles: list[str], valid_days: int = 365) -> dict[str, Any]:
+    def accredit(self, accreditor_slug: str, subject_slug: str, roles: list[str], valid_days: int = 365, **scope) -> dict[str, Any]:
         accreditor = self.issuer(accreditor_slug)
         subject = self.issuer(subject_slug)
         if accreditor is None or subject is None:
@@ -112,7 +113,7 @@ class Registry:
             raise RegistryError("an issuer cannot accredit itself")
         document = credmod.accreditation(accreditor=accreditor["id"], accreditor_key=self._key(accreditor_slug),
                                          subject_issuer=subject["id"], subject_public_key=subject["publicKey"],
-                                         roles=roles, valid_days=valid_days)
+                                         roles=roles, valid_days=valid_days, **scope)
         subject["accreditations"].append(document)
         _write(self._issuer_path(subject_slug), subject)
         _write(self.root / "credentials" / f"{_token(document['id'])}.json", document)
@@ -242,8 +243,8 @@ def http_status_checker(base_urls: dict[str, str], timeout: float = 5) -> Callab
     def check(document: dict) -> str:
         try:
             reference = document["credentialStatus"]["id"]
-            for prefix, base in base_urls.items():
-                if reference.startswith(prefix):
+            for prefix, base in sorted(base_urls.items(), key=lambda item: -len(item[0])):
+                if reference.startswith(prefix.rstrip("/") + "/") and str(document.get("issuer", "")).startswith(prefix.rstrip("/") + "/"):
                     token = _token(reference)
                     if not TOKEN.match(token):
                         return "unknown"
@@ -318,7 +319,7 @@ def make_handler(registry: Registry) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK, {"ok": True, "service": "registrar"})
                 elif route == "/v0/keys":
                     issuers = [{key: record[key] for key in ("id", "name", "role", "publicKey", "accreditations")} for record in registry.issuers()]
-                    self._json(HTTPStatus.OK, {"issuers": issuers, "base": AUTHORITY})
+                    self._json(HTTPStatus.OK, {"issuers": issuers, "base": registry.namespace})
                 elif route.startswith("/v0/credentials/"):
                     document = registry.credential(urllib.parse.unquote(route[len("/v0/credentials/"):]))
                     self._json(HTTPStatus.OK, document) if document else self._json(HTTPStatus.NOT_FOUND, {"error": "unknown credential"})
@@ -327,7 +328,7 @@ def make_handler(registry: Registry) -> type[BaseHTTPRequestHandler]:
                     if not TOKEN.match(token):
                         self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed credential id"})
                     else:
-                        self._json(HTTPStatus.OK, {"id": f"{AUTHORITY}credentials/{token}", "status": registry.status(token)})
+                        self._json(HTTPStatus.OK, {"id": f"{registry.namespace}credentials/{token}", "status": registry.status(token)})
                 elif route == "/v0/applications":
                     self._json(HTTPStatus.OK, {"applications": registry.applications()})
                 elif route.startswith("/v0/applications/"):

@@ -138,6 +138,7 @@ class Node:
 
     # Discovery --------------------------------------------------------------------------
     def agent_card(self, base_url: str) -> dict[str, Any]:
+        from ..authority.certification import describe
         manifest_url = f"{base_url.rstrip('/')}/v0/contract/{self.town.name}.contract.json"
         try:
             compute = capability.capabilities(self.town)
@@ -171,6 +172,7 @@ class Node:
                 "restricted_datasets": contract.restricted_datasets(self.town),
                 "scopes": {scope: value["label"] for scope, value in contract.SCOPES.items()},
                 "required_credentials": list(authorization.REQUIRED_TYPES),
+                "certification": describe(authorization.settings(self.town)["certification"]),
             },
             "compute": compute,
         }
@@ -184,6 +186,9 @@ class Node:
         record = TaskRecord(id=task_id, directory=directory, state="submitted", context_id=context_id)
         (directory / "task.jsonld").write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if presentation is not None:
+            directory.chmod(0o700)
+            (directory / "presentation.json").touch(mode=0o600)
+            (directory / "presentation.json").chmod(0o600)
             (directory / "presentation.json").write_text(json.dumps(presentation, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         # Publish before validation/execution: an inline query can run for minutes.
         record.save()
@@ -235,27 +240,39 @@ class Node:
     def _directory(self) -> dict[str, str] | None:
         if self._directory_override is not None:
             return self._directory_override
-        registrar = authorization.settings(self.town)["registrar"]
-        if not registrar:
+        settings = authorization.settings(self.town)
+        registrar = settings["registrar"]
+        registrars = settings["registrars"]
+        if not registrar and not registrars:
             return None
         if self._directory_cache and time.time() - self._directory_cache[0] < 300:
             return self._directory_cache[1]
         from ..authority.registrar import http_directory
 
-        value = http_directory(str(registrar))
+        value = {}
+        conflicts = set()
+        for base in set(registrars.values()) | ({str(registrar)} if registrar else set()):
+            for issuer, key in http_directory(base).items():
+                if issuer in value and value[issuer] != key:
+                    conflicts.add(issuer)
+                value[issuer] = key
+        for issuer in conflicts:
+            value.pop(issuer, None)
         self._directory_cache = (time.time(), value)
         return value
 
     def _status_checker(self) -> Callable[[dict], str] | None:
         if self._status_override is not None:
             return self._status_override
-        registrar = authorization.settings(self.town)["registrar"]
-        if not registrar:
+        settings = authorization.settings(self.town)
+        registrar = settings["registrar"]
+        registrars = settings["registrars"]
+        if not registrar and not registrars:
             return None
         from ..authority import AUTHORITY
         from ..authority.registrar import http_status_checker
 
-        return http_status_checker({AUTHORITY: str(registrar)})
+        return http_status_checker(({AUTHORITY: str(registrar)} if registrar else {}) | registrars)
 
     def _process(self, record: TaskRecord, document: Any, presentation: dict[str, Any] | None) -> None:
         if not isinstance(document, dict):
@@ -339,6 +356,11 @@ class Node:
                 gates["admissibility"] = "fail"
                 record.refusal = {"gate": "admissibility", "reason": "restricted-dataset", "detail": "the task uses a restricted dataset this town does not serve, or uses restricted data outside a controlled-access task"}
             record.state, record.message = "rejected", f"rejected by the contract ({record.refusal['reason']})"
+            return
+        if controlled and facts.certification and not facts.certification['ok']:
+            gates['authority'] = 'pending'
+            record.state, record.message = 'input-required', facts.certification['message']
+            record.refusal = {'gate': 'authority', 'reason': 'certification-required', **facts.certification}
             return
         if checks.get("task-admissibility") == "entailed":
             if controlled:
@@ -454,7 +476,25 @@ class Node:
         built = contribution.build(self.town, document, result, subject)
         release = None
         if controlled:
-            release = authorization.release_class(facts, checks or {}) if facts else None
+            # Jobs may outlive an approval or a group membership. Re-read evidence and
+            # fresh issuer status before any output is made available to the requester.
+            path = record.directory / 'presentation.json'
+            current_presentation = json.loads(path.read_text()) if path.exists() else None
+            fresh = authorization.assess(self.town, document, current_presentation,
+                                         directory=self._directory(), status_checker=self._status_checker())
+            if fresh.certification and not fresh.certification['ok']:
+                self._withhold(record, result, fresh.certification['message'])
+                record.authority = fresh.as_dict()
+                return
+            fresh_report = self.validator.validate(document, receiver_assertions=fresh.axioms, probes=fresh.probes)
+            fresh_checks = {c['kind']: c['status'] for c in fresh_report['checks']}
+            if fresh_report['status'] in {'invalid', 'indeterminate'}:
+                self._withhold(record, result, 'fresh authorization verification failed')
+                return
+            if authorization.diagnose(fresh, fresh_checks, self.town)['needs']:
+                self._withhold(record, result, 'required approval expired, revoked or no longer accepted')
+                return
+            release = authorization.release_class(fresh, fresh_checks)
             if release is None:
                 self._withhold(record, result, "no vetted data access authorization names a release class for this task")
                 return

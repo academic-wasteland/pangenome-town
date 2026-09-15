@@ -16,10 +16,10 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from . import AUTHORITY, VC_CONTEXT
+from . import VC_CONTEXT
 from . import keys as keymod
 
-HOLDER_TYPES = ("EthicsApproval", "DataAccessAuthorization")
+HOLDER_TYPES = ("EthicsApproval", "DataAccessAuthorization", "Qualification", "ComputeAuthorization", "HumanDelegation")
 
 
 def iso(moment: datetime) -> str:
@@ -46,10 +46,11 @@ def _now(now: datetime | None) -> datetime:
 
 
 def issue(*, issuer: str, issuer_key, types: str, subject: dict[str, Any], valid_days: int = 30,
-          now: datetime | None = None, credential_id: str | None = None) -> dict[str, Any]:
+          now: datetime | None = None, credential_id: str | None = None, namespace: str | None = None) -> dict[str, Any]:
     moment = _now(now)
     token = str(uuid.uuid4())
-    identifier = credential_id or f"{AUTHORITY}credentials/{token}"
+    base = namespace or (issuer.split("/issuers/", 1)[0] + "/" if "/issuers/" in issuer else issuer.rstrip("/") + "/")
+    identifier = credential_id or f"{base}credentials/{token}"
     status_token = identifier.rsplit("/", 1)[-1] if credential_id else token
     document = {
         "@context": list(VC_CONTEXT),
@@ -59,15 +60,19 @@ def issue(*, issuer: str, issuer_key, types: str, subject: dict[str, Any], valid
         "validFrom": iso(moment),
         "validUntil": iso(moment + timedelta(days=valid_days)),
         "credentialSubject": dict(subject),
-        "credentialStatus": {"id": f"{AUTHORITY}status/{status_token}", "type": "RegistrarStatus"},
+        "credentialStatus": {"id": f"{base}status/{status_token}", "type": "RegistrarStatus"},
     }
     return keymod.sign(document, issuer_key, f"{issuer}#key-1", created=iso(moment))
 
 
 def accreditation(*, accreditor: str, accreditor_key, subject_issuer: str, subject_public_key: str, roles: list[str],
-                  valid_days: int = 365, now: datetime | None = None) -> dict[str, Any]:
+                  valid_days: int = 365, now: datetime | None = None,
+                  types: list[str] | None = None, scopes: list[str] | None = None,
+                  datasets: list[str] | None = None, delegation_depth: int = 0) -> dict[str, Any]:
     return issue(issuer=accreditor, issuer_key=accreditor_key, types="Accreditation",
-                 subject={"id": subject_issuer, "publicKey": subject_public_key, "roles": list(roles)},
+                 subject={"id": subject_issuer, "publicKey": subject_public_key, "roles": list(roles),
+                          "types": types or [], "scopes": scopes or [], "datasets": datasets or [],
+                          "delegation_depth": delegation_depth},
                  valid_days=valid_days, now=now)
 
 
@@ -76,7 +81,8 @@ def task_digest(task: dict[str, Any]) -> str:
 
 
 def present(*, holder: str, holder_key, credentials: list[dict[str, Any]], accreditations: list[dict[str, Any]],
-            task: dict[str, Any], audience: str, now: datetime | None = None, nonce: str | None = None) -> dict[str, Any]:
+            task: dict[str, Any], audience: str, now: datetime | None = None, nonce: str | None = None,
+            identity_tokens: list[dict] | None = None) -> dict[str, Any]:
     moment = _now(now)
     document = {
         "type": "Presentation",
@@ -90,6 +96,8 @@ def present(*, holder: str, holder_key, credentials: list[dict[str, Any]], accre
         "created": iso(moment),
         "nonce": nonce or str(uuid.uuid4()),
     }
+    if identity_tokens:
+        document["identity_tokens"] = identity_tokens
     return keymod.sign(document, holder_key, f"{holder}#holder-key", created=iso(moment))
 
 
@@ -269,8 +277,7 @@ def verify_presentation(presentation: Any, task: Any, *, audience: str, anchors:
                 continue
             failures = _time_problems(document, moment)
             status, status_problems = _status(document, status_checker, revocation) if status_checker else ("unchecked", [])
-            if status == "revoked":
-                failures = [*failures, "revoked"]
+            failures.extend(status_problems)
             if failures:
                 problems.append(f"accreditation {document.get('id')}: {'; '.join(failures)}")
                 continue
