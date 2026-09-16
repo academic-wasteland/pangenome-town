@@ -328,3 +328,62 @@ Verify the public site without submitting any computation:
 ```sh
 .venv/bin/python examples/public_replay_demo.py
 ```
+
+## Live visitors on the host laptop
+
+For independent visitor sessions, use the dedicated live demo server:
+
+```sh
+.venv/bin/python -m pangenome_town.demo_public \
+  --towns ../ubar/town.toml ../yamatai/town.toml \
+  --storage ~/.local/state/wasteland-public-demo \
+  --bind 0.0.0.0 --port 8395 --slots 2
+```
+
+Attendees open `http://<laptop-Wi-Fi-IP>:8395/demo` and
+`http://<laptop-Wi-Fi-IP>:8395/demo/visitor`. Each browser receives an unguessable,
+HTTP-only session cookie and its own control token, stage instances, signing keys,
+outputs and resets. Tabs in the same browser share that visitor session; use a
+private window or another browser for a second visitor. Separate visitors cannot
+read, approve or reset one another's runs. A session expires after two idle hours
+unless its worker is still running. Restarting the service clears browser sessions;
+completed run artifacts remain in the private storage directory.
+
+Both cases run new analyses: the first queries the public JaSaPaGe cohorts on the
+laptop, the second submits the visitor VCF to Yamatai's DDBJ Slurm site. Only the
+fixed demo workflows are available. The visitor VCF retains the existing 40 KB,
+biallelic GT-only validation. Use synthetic or public data on the venue HTTP
+network. The separate public website remains recorded playback.
+
+The host permits two simultaneous analyses, at most eight running/queued requests
+and 64 visitor sessions. Waiting requests emit an inspectable queue event; a full
+queue refuses approval without submitting work, and the visitor can retry.
+Credentials are checked again before execution/release. The usual narration,
+pause/resume, per-case resets, signature/tamper inspection and complete aggregate
+downloads remain available. Stopping narration stops automatic progression; it
+does not cancel a job already submitted to Slurm. Reset is refused while a job is
+running. Queue delays can extend the demonstration beyond three minutes.
+
+This service does not mount the operator cockpit, mail, general file access,
+production credentials or arbitrary task dispatch. The local presenter stage on
+8393 and cockpit on 8390 are unchanged. Its assets are served locally, so attendees
+do not need a CDN. Browser verification uses the bundled Ed25519 implementation,
+including on HTTP LAN origins.
+
+Installed laptop service: `systemctl --user status wasteland-public-demo`.
+Stop sharing with `systemctl --user stop wasteland-public-demo`.
+The Wi-Fi address on 16 September was `172.31.99.247`; it may change between venues.
+The venue network must allow communication between attendee devices and the host.
+
+Verify in a fresh browser (runs both analyses, including a real DDBJ job):
+
+```sh
+.venv/bin/python examples/public_live_demo.py \
+  --url http://127.0.0.1:8395/demo
+```
+
+The isolation/queue tests run locally without DDBJ:
+
+```sh
+.venv/bin/pytest -q tests/test_demo_public.py
+```
