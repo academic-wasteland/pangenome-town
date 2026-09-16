@@ -224,5 +224,5 @@ export, see the [hackathon stage runbook](docs/hackathon-stage.md).
 ### Literature scout and phenotype search
 
 Ubar's Bloodninja has an hourly literature apprentice covering phenotypes (HPO,
-MONDO) and pangenomes; Phenomancer provides INDIGENA semantic-similarity baseline
-search. See [setup, operations and method limitations](docs/literature-and-phenotypes.md).
+MONDO) and pangenomes; Phenomancer provides locally trained INDIGENA phenotype
+search and explicitly selectable semantic-similarity baselines. See [setup, operations and method limitations](docs/literature-and-phenotypes.md).

@@ -32,3 +32,24 @@ embeddings, entity mapping, gene annotations and checkpoint hash to
 Inference consumes `.npy` with `allow_pickle=False` and a JSON mapping, not executable
 pickle content. Keep the two exported files together. Training and inference use
 the same mapping from the live upstream triples factory.
+
+A validation-selected intermediate model can be deployed while the longer run
+continues. `export_checkpoint.py --epoch 10 --validation-mr 348.9912` snapshots the
+checkpoint before reconstructing the upstream triples factory and exports to the
+separate `data/wasteland-model-bootstrap/` directory. Use the epoch and validation
+metric actually recorded for that checkpoint; do not infer them from the epoch ceiling.
+`verify_bundle.py MODEL_DIR` compares ten actual learned gene profiles against the
+upstream `compare_vectorized` implementation.
+
+The live configuration points to `data/wasteland-model-current`, a symlink to an
+immutable model version. `finish_training.py TOWN_TOML` waits for the local
+`ubar-indigena-training.service` to finish successfully, checks the checkpoint hash,
+validation record and inference output, and switches that pointer atomically. Failed
+training or validation leaves the current model serving requests. No bridge restart
+is required when switching versions. Run this watcher with the application Python
+environment, not the training environment.
+
+```sh
+systemctl --user status ubar-indigena-training ubar-indigena-activation
+journalctl --user -u ubar-indigena-training --all
+```

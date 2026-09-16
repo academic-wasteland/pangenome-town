@@ -39,7 +39,7 @@ def search(town, body):
         from .indigena import search as learned_search
         if not settings.get('model'):
             raise ValueError('a trained INDIGENA model is not installed yet')
-        return learned_search(settings, query)
+        return learned_search(settings, {k: v for k, v in query.items() if k != "measure"})
     root = Path(settings['data']).expanduser().resolve()
     groovy = settings.get('groovy', 'groovy')
     town.state_dir.mkdir(parents=True, exist_ok=True)

@@ -148,3 +148,28 @@ DOI identity, recipient constraints, hourly reservations, stable retry IDs and
 bounded phenotype inputs. The real test query uses seizures (`HP:0001250`) and
 intellectual disability (`HP:0001249`) and returns ranked mouse genes from the
 actual upstream ontology and annotation corpus. No simulated scores are used.
+
+### Live verification, 16 September 2026
+
+The initial live learned model is the validation-selected epoch-10 checkpoint from
+local GPU training. Full training continues with the 100-epoch ceiling and can
+promote a later validation-selected checkpoint after completion gates pass.
+
+- Real PMC, arXiv and bioRxiv searches completed; rerunning reused all five successful
+  source/topic searches. Eighteen distinct relevant papers were cached in the first round.
+- Local Qwen selected *A rooted tree framework for linear time ultrabubble detection*
+  for Yamatai's Bob; the relay confirmed delivery to that resident. Only one paper
+  was sent, and subsequent attempts were limited by the persistent hourly budget.
+- Both baseline and trained-model phenotype queries completed from Yamatai through
+  the relay to Ubar, scoring 1,529 mouse genes. The trained inference matched the
+  upstream implementation on ten real gene profiles within 6.6e-8 absolute error.
+- The initial checkpoint was evaluated on 222 held-out pairs across 136 diseases
+  absent from the training graph: mean rank 376.86, MRR 0.0873, Hits@10 18.9%.
+  These are single-fold, unfiltered pair-level metrics, not the paper's macro-averaged
+  ten-fold benchmark. They were not used for checkpoint selection.
+- Initial checkpoint SHA-256:
+  `2ceb2eb9b5b86d949ee0e86ab89f204a5c8b533f0c05e818417f1e84404cd1a2`.
+
+The unread-mail audit found one answered Bloodninja wrapper still unread and corrected
+it. No unhandled agent inbox messages remained in that audit. Seven human inbox
+messages were retained: four agent replies and three Dolt backup-health advisories.
