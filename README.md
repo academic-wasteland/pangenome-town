@@ -216,3 +216,7 @@ data; the agent prompt says so explicitly.
 Independent providers and agent certification: see [the trust model, configuration,
 and Keycloak integration](docs/federated-certification.md), the [executable demos](docs/demos/certification.md),
 and [external-town discovery and Zerzura contact](docs/discovering-towns.md).
+
+For a live three-minute web presentation with real JaSaPaGe cohort analysis,
+signed permissions, an inspectable animated transcript and refused genotype
+export, see the [hackathon stage runbook](docs/hackathon-stage.md).
