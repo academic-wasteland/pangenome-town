@@ -17,12 +17,25 @@ from ..authority import keys
 from ..authority.credentials import iso, parse_iso
 from ..exchange import Envelope, ExchangeLog
 from ..tools.graph import Region
-from . import ComputeError
-from .runner import run_task
+from . import ComputeError, SemanticPolicyError
+from .runner import SemanticGate, run_task
 from .sites import driver_for, load_sites
 from .workflows import SAMPLE_RE, TEMPLATES
 
 COHORT_WORKFLOWS = {'allele-frequency', 'genotype-export'}
+
+__all__ = [
+    "COHORT_WORKFLOWS",
+    "SemanticGate",
+    "SemanticPolicyError",
+    "approve",
+    "authorize",
+    "catalog",
+    "execute",
+    "inspect_task",
+    "prepare",
+    "record_request",
+]
 
 
 def catalog(town):

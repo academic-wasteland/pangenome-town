@@ -1,0 +1,124 @@
+"""GA4GH Task Execution Service (TES) v1.1 schema mapping for RCP tasks."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from typing import Any
+
+from ..exchange import canonical
+
+
+def _extract_inputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract input file URIs from an RCP ResearchTask and map to TES inputs."""
+    inputs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_input(url: str, path: str | None = None) -> None:
+        if not url or url in seen:
+            return
+        seen.add(url)
+        # Determine container path: /container/input/<filename>
+        basename = os.path.basename(url.split("?")[0].split("#")[0]) or "input_file"
+        target_path = path or f"/container/input/{basename}"
+        inputs.append({
+            "url": url,
+            "path": target_path,
+        })
+
+    # 1. usesDataset can contain entities with url, downloadUrl, or @id
+    datasets = rcp_task.get("usesDataset")
+    if isinstance(datasets, list):
+        for ds in datasets:
+            if isinstance(ds, dict):
+                # Check for explicit url/downloadUrl
+                url = ds.get("url") or ds.get("downloadUrl") or ds.get("@id")
+                if isinstance(url, str) and url.startswith(("http://", "https://", "s3://", "file://")):
+                    add_input(url)
+            elif isinstance(ds, str) and ds.startswith(("http://", "https://", "s3://", "file://")):
+                add_input(ds)
+
+    # 2. Check explicit "inputs" in rcp_task if present
+    explicit_inputs = rcp_task.get("inputs")
+    if isinstance(explicit_inputs, list):
+        for item in explicit_inputs:
+            if isinstance(item, dict):
+                url = item.get("url") or item.get("path")
+                target = item.get("path") if item.get("url") else None
+                if url:
+                    add_input(url, target)
+            elif isinstance(item, str):
+                add_input(item)
+
+    return inputs
+
+
+def _extract_outputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract expected outputs from an RCP ResearchTask and map to TES outputs."""
+    outputs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_output(path: str, url: str | None = None) -> None:
+        if not path or path in seen:
+            return
+        seen.add(path)
+        out: dict[str, Any] = {"path": path}
+        if url:
+            out["url"] = url
+        outputs.append(out)
+
+    # Check "outputs" or "hasOutput" in rcp_task
+    task_outputs = rcp_task.get("outputs") or rcp_task.get("hasOutput")
+    if isinstance(task_outputs, list):
+        for item in task_outputs:
+            if isinstance(item, dict):
+                path = item.get("path") or f"/container/output/{item.get('name', 'output')}"
+                url = item.get("url")
+                add_output(path, url)
+            elif isinstance(item, str):
+                path = item if item.startswith("/") else f"/container/output/{item}"
+                add_output(path)
+
+    return outputs
+
+
+def build_tes_task(rcp_task: dict, executor_image: str, command: list[str]) -> dict:
+    """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
+
+    Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
+    """
+    inputs = _extract_inputs(rcp_task)
+    outputs = _extract_outputs(rcp_task)
+
+    executors = [
+        {
+            "image": executor_image,
+            "command": list(command),
+        }
+    ]
+
+    rcp_id = str(rcp_task.get("@id", ""))
+    canonical_json = canonical(rcp_task)
+    rcp_digest = "sha256:" + hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+    tags = {
+        "rcp_id": rcp_id,
+        "rcp_digest": rcp_digest,
+    }
+
+    # Pass through existing tags if present
+    if isinstance(rcp_task.get("tags"), dict):
+        for k, v in rcp_task["tags"].items():
+            if k not in tags:
+                tags[k] = str(v)
+
+    task_payload: dict[str, Any] = {
+        "name": rcp_task.get("name") or rcp_id or "rcp-task",
+        "description": rcp_task.get("description", ""),
+        "inputs": inputs,
+        "outputs": outputs,
+        "executors": executors,
+        "tags": tags,
+    }
+
+    return task_payload

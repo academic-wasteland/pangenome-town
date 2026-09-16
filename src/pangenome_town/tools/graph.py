@@ -146,6 +146,49 @@ class GraphTools:
             raise QueryError(f"VCF not present at {self.town.vcf}")
         return self.town.vcf  # type: ignore[return-value]
 
+    def build_tes_chunk_task(
+        self,
+        region: Region,
+        executor_image: str = "quay.io/vgteam/vg:latest",
+        container_graph_path: str = "/container/input/graph.gbz",
+    ) -> dict[str, Any]:
+        """Build a GA4GH TES v1.1 task definition for a vg chunk operation."""
+        from ..compute.tes_schema import build_tes_task
+
+        graph_path = self._require_graph()
+        path_name = self.town.reference_path(region.assembly, region.chrom)
+        stem = f"chunk_{region.chrom}_{region.start}_{region.end}"
+        command = [
+            "vg",
+            "chunk",
+            "-x",
+            container_graph_path,
+            "-p",
+            f"{path_name}:{region.start}-{max(region.end - 1, region.start)}",
+            "-c",
+            "0",
+            "-b",
+            f"/container/output/{stem}",
+        ]
+        rcp_task = {
+            "@context": "https://w3id.org/research-commons/v0.1/",
+            "@id": f"urn:uuid:vg-chunk-{region.chrom}-{region.start}-{region.end}",
+            "@type": ["ResearchTask", "RegionExtractionTask"],
+            "inputs": [
+                {
+                    "url": f"file://{graph_path}",
+                    "path": container_graph_path,
+                }
+            ],
+            "outputs": [
+                {
+                    "name": f"{stem}.vg",
+                    "path": f"/container/output/{stem}.vg",
+                }
+            ],
+        }
+        return build_tes_task(rcp_task, executor_image=executor_image, command=command)
+
     def summary(self, *, refresh: bool = False) -> dict[str, Any]:
         """Whole-graph statistics. Slow on a full human pangenome (minutes), so cached per graph fingerprint."""
         graph = self._require_graph()

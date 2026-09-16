@@ -11,10 +11,23 @@ from types import SimpleNamespace
 import pytest
 
 from pangenome_town import config
-from pangenome_town.compute import TEMPLATES, ComputeError, load_sites, plan, reachable, run_task, validate
+from pangenome_town.compute import (
+    TEMPLATES,
+    ComputeError,
+    ComputeState,
+    SemanticGate,
+    SemanticPolicyError,
+    TESComputeRunner,
+    load_sites,
+    plan,
+    reachable,
+    run_task,
+    validate,
+)
 from pangenome_town.compute import sites as sites_module
 from pangenome_town.compute.runner import pick_site
 from pangenome_town.compute.sites import LocalDriver, RenderedJob, Site, SshDriver, Step
+from pangenome_town.compute.tes_schema import build_tes_task
 from pangenome_town.compute.workflows import AGGREGATE, INDIVIDUAL, render
 from pangenome_town.tools.graph import Region
 
@@ -509,3 +522,214 @@ tools = ["bcftools"]
     site, diagnostics = pick_site(town, "allele-frequency", ("jpt-individual-genotypes",))
     assert site.name == "cluster"
     assert any(item["site"] == "workstation" and "does not hold jpt-individual-genotypes" in item["detail"] for item in diagnostics)
+
+
+# Semantic Gating (ADR 0001) & TES Runner tests --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reasoner_status", "should_pass"),
+    [
+        ("entailed", True),
+        ("contradicted", False),
+        ("unknown", False),
+        ("invalid", False),
+        ("indeterminate", False),
+    ],
+)
+def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass):
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return reasoner_status
+
+    gate = SemanticGate(reasoner=MockKMReasoner())
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+        "name": "Test Task",
+    }
+
+    if should_pass:
+        assert gate.evaluate(sample_rcp_task) == "entailed"
+
+        @gate
+        def dispatch_action(task):
+            return "dispatched"
+
+        assert dispatch_action(sample_rcp_task) == "dispatched"
+    else:
+        with pytest.raises(SemanticPolicyError) as exc_info:
+            gate.evaluate(sample_rcp_task)
+        assert reasoner_status in str(exc_info.value)
+
+        @gate
+        def dispatch_action(task):
+            return "dispatched"
+
+        with pytest.raises(SemanticPolicyError):
+            dispatch_action(sample_rcp_task)
+
+
+def test_build_tes_task_schema_mapping():
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:test-task-12345",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+        "name": "Extract region chr1",
+        "description": "Extracting subgraph chunk",
+        "usesDataset": [
+            {
+                "@id": "https://example.org/datasets/graph.gbz",
+                "@type": "PublicDataset",
+                "url": "https://example.org/datasets/graph.gbz",
+            }
+        ],
+        "outputs": [
+            {
+                "name": "chunk.vg",
+                "path": "/container/output/chunk.vg",
+            }
+        ],
+    }
+    image = "quay.io/vgteam/vg:latest"
+    command = ["vg", "chunk", "-x", "/container/input/graph.gbz"]
+
+    tes_task = build_tes_task(sample_rcp_task, executor_image=image, command=command)
+
+    assert isinstance(tes_task, dict)
+    assert tes_task["name"] == "Extract region chr1"
+    assert tes_task["description"] == "Extracting subgraph chunk"
+
+    # Inputs mapping
+    assert len(tes_task["inputs"]) == 1
+    assert tes_task["inputs"][0]["url"] == "https://example.org/datasets/graph.gbz"
+    assert tes_task["inputs"][0]["path"] == "/container/input/graph.gbz"
+
+    # Outputs mapping
+    assert len(tes_task["outputs"]) == 1
+    assert tes_task["outputs"][0]["path"] == "/container/output/chunk.vg"
+
+    # Executors mapping
+    assert len(tes_task["executors"]) == 1
+    assert tes_task["executors"][0]["image"] == image
+    assert tes_task["executors"][0]["command"] == command
+
+    # Tags mapping with rcp_id and canonical digest
+    assert "tags" in tes_task
+    assert tes_task["tags"]["rcp_id"] == "urn:uuid:test-task-12345"
+    assert tes_task["tags"]["rcp_digest"].startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_tes_compute_runner_dispatch_and_poll():
+    import respx
+
+    endpoint = "https://tes.example.org"
+    token = "secret-bearer-token"
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token)
+
+    tes_payload = {
+        "name": "tes-job",
+        "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+    }
+
+    with respx.mock(base_url=endpoint) as respx_mock:
+        post_route = respx_mock.post("/v1/tasks").respond(
+            status_code=200,
+            json={"id": "tes-task-999"},
+        )
+        task_id = await runner.dispatch(tes_payload)
+        assert task_id == "tes-task-999"
+        assert post_route.called
+        assert post_route.calls.last.request.headers["Authorization"] == f"Bearer {token}"
+
+        get_route = respx_mock.get("/v1/tasks/tes-task-999").respond(
+            status_code=200,
+            json={"id": "tes-task-999", "state": "RUNNING"},
+        )
+        state = await runner.poll_status(task_id)
+        assert state == ComputeState.RUNNING.value
+        assert get_route.called
+        assert get_route.calls.last.request.headers["Authorization"] == f"Bearer {token}"
+
+        # Test state mapping for all standard TES states
+        states_to_test = [
+            ("QUEUED", ComputeState.QUEUED.value),
+            ("INITIALIZING", ComputeState.INITIALIZING.value),
+            ("RUNNING", ComputeState.RUNNING.value),
+            ("COMPLETE", ComputeState.COMPLETE.value),
+            ("SYSTEM_ERROR", ComputeState.SYSTEM_ERROR.value),
+            ("CANCELED", ComputeState.CANCELED.value),
+            ("EXECUTOR_ERROR", ComputeState.EXECUTOR_ERROR.value),
+        ]
+        for tes_st, expected_comp_st in states_to_test:
+            respx_mock.get(f"/v1/tasks/{tes_st}").respond(
+                status_code=200,
+                json={"id": tes_st, "state": tes_st},
+            )
+            polled = await runner.poll_status(tes_st)
+            assert polled == expected_comp_st
+
+
+@pytest.mark.asyncio
+async def test_vg_chunk_tes_dispatch(towns):
+    import respx
+
+    from pangenome_town.tools import graph
+
+    # 1. Setup mock reasoner strictly returning 'entailed'
+    class EntailedReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(reasoner=EntailedReasoner())
+
+    # 2. Build VG chunk operation task
+    tools = graph.GraphTools(towns["ubar"])
+    region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
+    tes_payload = tools.build_tes_chunk_task(region)
+
+    # 3. Assert build_tes_task generated executors with vg image and command
+    assert len(tes_payload["executors"]) == 1
+    executor = tes_payload["executors"][0]
+    assert executor["image"] == "quay.io/vgteam/vg:latest"
+    assert executor["command"][0] == "vg"
+    assert executor["command"][1] == "chunk"
+
+    # 4. Pass semantic gate
+    rcp_task_mock = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": tes_payload["tags"]["rcp_id"],
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+    }
+    assert gate.evaluate(rcp_task_mock) == "entailed"
+
+    # 5. Mock HTTP endpoint
+    endpoint = "https://tes.service.org"
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token="mock-token")
+
+    with respx.mock(base_url=endpoint) as respx_mock:
+        post_route = respx_mock.post("/v1/tasks").respond(
+            status_code=200,
+            json={"id": "mock-tes-id"},
+        )
+        get_route = respx_mock.get("/v1/tasks/mock-tes-id").respond(
+            status_code=200,
+            json={"id": "mock-tes-id", "state": "COMPLETE"},
+        )
+
+        task_id = await runner.dispatch(tes_payload)
+        assert task_id == "mock-tes-id"
+        assert post_route.called
+
+        final_state = await runner.poll_status(task_id)
+        assert final_state == ComputeState.COMPLETE.value
+        assert get_route.called
+
