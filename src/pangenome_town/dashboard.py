@@ -102,6 +102,7 @@ class DashboardState:
         self.runner = subprocess.run
         self.agentsview_url = AGENTSVIEW_URL
         self._stage = None
+        self._cluster_stage = None
 
     def demo_stage(self):
         with self.lock:
@@ -109,6 +110,13 @@ class DashboardState:
                 from .demo_stage import DemoStage
                 self._stage = DemoStage(self.towns)
             return self._stage
+
+    def cluster_stage(self):
+        with self.lock:
+            if self._cluster_stage is None:
+                from .demo_cluster import ClusterStage
+                self._cluster_stage = ClusterStage(self.towns)
+            return self._cluster_stage
 
     # Supervisor proxy -----------------------------------------------------------------
     def supervisor(self, path: str, timeout: float = 5.0) -> Any:
@@ -543,10 +551,11 @@ class DashboardState:
     def act(self, action: str, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
-        if action.startswith('demo/'):
+        if action.startswith(('demo/', 'demo-cluster/')):
             from .demo_stage import StageError
             try:
-                return self.demo_stage().act(action.split('/', 1)[1], payload)
+                stage = self.cluster_stage() if action.startswith('demo-cluster/') else self.demo_stage()
+                return stage.act(action.split('/', 1)[1], payload)
             except StageError as error:
                 raise ActionError(str(error)) from error
         if action == "contacts/send":
@@ -915,6 +924,11 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 elif route == "/demo":
                     page = Path(__file__).with_name('demo_stage.html').read_text().replace('__COCKPIT_TOKEN__', state.token)
                     self._send(HTTPStatus.OK, page.encode(), 'text/html; charset=utf-8')
+                elif route == "/demo/visitor":
+                    page = Path(__file__).with_name('demo_cluster.html').read_text().replace('__COCKPIT_TOKEN__', state.token)
+                    self._send(HTTPStatus.OK, page.encode(), 'text/html; charset=utf-8')
+                elif route == "/api/demo-cluster":
+                    self._json(HTTPStatus.OK, state.cluster_stage().snapshot())
                 elif route == "/api/demo":
                     self._json(HTTPStatus.OK, state.demo_stage().snapshot())
                 elif route == "/api/resources":

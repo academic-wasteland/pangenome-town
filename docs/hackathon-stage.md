@@ -113,3 +113,72 @@ removes it afterward. It requires `uvx` and a first-run Chromium download, so
 run it **before** arriving at the venue. The unit tests instead use a tiny local
 VCF fixture; they also test forged task scope, revoked permission during compute,
 duplicate approval, stale run identifiers, and HTTP action guards.
+
+## Second use case: bring your own data
+
+Choose **02 · Bring your own data**, or open
+**http://127.0.0.1:8393/demo/visitor**. The original comparison page and its flow
+are unchanged apart from the navigation links. Each case has independent state;
+switching pages leaves jobs and results intact. Reset affects only the current case.
+
+| Time | Action | What to say |
+| --- | --- | --- |
+| 0:00–0:20 | Keep the synthetic visitor VCF selected. | “This visitor brings their own data and needs somebody else's compute.” |
+| 0:20–0:45 | Click **Request compute**. Inspect **Camelot IRB approval**. | “The visitor can grant data permission. Yamatai has cluster access. Neither substitutes for ethics approval: nothing has been uploaded or submitted.” |
+| 0:45–1:00 | Click **Approve as Camelot IRB**. | “This demo credential binds the exact file fingerprint, analysis and destination for ten minutes.” |
+| 1:00–1:45 | Watch the transcript and scheduler. Click **DDBJ** for job details. | “Yamatai transfers the approved file, then submits a real Slurm job via DDBJ and a001. These are actual scheduler observations.” |
+| 1:45–2:30 | Show aggregate counts; inspect the completion message. | “Credentials are checked again before release. The visitor receives counts, not individual genotype records.” |
+
+This case **requires venue network access, working SSH authentication and a
+responsive DDBJ queue**. The first live rehearsal took approximately 24 seconds
+from approval to results (Slurm job 20604587); queue time is not guaranteed.
+Finish the narration within three minutes even if queued: show the submission
+and switch to the first case while it runs. No cached result is substituted for
+an unfinished job. A short job may finish between polls without a RUNNING event.
+
+The default file is a synthetic three-site, two-sample VCF, separate from the
+Saudi and Japanese datasets. Expected alternate/called allele counts are 1/4,
+3/4 and 1/4. **Choose my own demo VCF** accepts plain-text VCFs up to 40 KB,
+GT-only haploid/diploid calls (0, 1 or missing), and single alternate A/C/G/T/N
+alleles. Use synthetic or appropriately approved demonstration data. The file
+is read into server memory at request time; no remote transfer occurs until the
+approval click. This is a bounded demo uploader, not a production data-ingestion
+or real IRB application service.
+
+Camelot here is an **isolated demonstration IRB signer**. The visitor signs the
+dataset permission, Yamatai signs compute permission, and the policy accepts
+Camelot specifically for EthicsApproval. Real Ed25519 credentials and the shared
+certification evaluator enforce holder, scope, issuer, expiry/status and exact
+compute/data task binding. The demo additionally binds IRB approval to the task
+digest and checks the actual input fingerprint and destination before transfer,
+after transfer and before result release. Approval in this page is not legal or
+institutional ethics authorization, and does not modify production trust policy.
+
+Yamatai's enabled `ddbj` SSH/Slurm site provides the gateway, submit host and work
+directory. This case never falls back to local or gateway computation. Each job
+uses one CPU, 1 GB and a one-minute execution limit. The existing driver cancels
+its own job if it does not finish within that limit plus five minutes of queue
+allowance. A private `visitor-demo-<run-id>` directory stages input; `bcftools`
+and `awk` run on a compute node. Only aggregate output is fetched. The job deletes
+individual files, and cleanup removes the run directory. Cleanup failures appear
+in the transcript. Demo archives contain input fingerprints, signed decisions,
+scheduler observations and aggregate results, but not the uploaded VCF.
+
+Rehearse the new case (submits one real small job):
+
+```sh
+.venv/bin/python examples/visitor_browser_demo.py
+```
+
+Inspect a completed synthetic run without submitting another job:
+
+```sh
+.venv/bin/python examples/visitor_browser_demo.py --inspect-existing
+uvx showboat verify docs/demos/visitor-stage.md
+```
+
+These commands leave the original comparison's state intact. Automated tests in
+`tests/test_demo_cluster.py` use a fake scheduler and real signed credentials to
+check absent IRB approval, file/task/destination changes, revocation, stale or
+duplicate approval, and malformed input. The browser rehearsal verifies real
+Slurm completion, counts, inspectable evidence, and navigation between the cases.
