@@ -1,0 +1,11 @@
+[Unit]
+Description=Bloodninja's hourly phenotype and pangenome literature collection
+After=network-online.target gascity-supervisor.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Public/software/academic-wasteland/pangenome-town
+ExecStart=%h/Public/software/academic-wasteland/pangenome-town/.venv/bin/pangenome-town --town %h/Public/software/academic-wasteland/ubar/town.toml literature-collect --wake
+TimeoutStartSec=10min
+Nice=10
+UMask=0077

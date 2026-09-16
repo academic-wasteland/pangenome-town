@@ -41,3 +41,22 @@ def test_federation_never_publishes_local_attachments(towns):
     message = Envelope.new('question','ubar','visiting_lab',{}, attachments=(Attachment('data','sha256:abc','/private/data'),))
     with pytest.raises(peers.PeerError,match='inline messages only'):
         peers.send(town,message)
+
+
+def test_external_discovery_is_read_only_and_never_discloses_token(towns, tmp_path, monkeypatch):
+    state = tmp_path / 'private'
+    state.mkdir()
+    (state / 'town.json').write_text(json.dumps({'name': 'ubar', 'hub': 'https://relay.example', 'token': 'secret'}))
+    town = dataclasses.replace(towns['ubar'], extra={'federation': {'state': str(state)}})
+    calls = []
+    def opened(req, timeout):
+        calls.append(req)
+        return io.BytesIO(json.dumps({'towns': [{'name': 'zerzura', 'capabilities': ['describe', 'mimic-schema']}]}).encode())
+    monkeypatch.setattr(peers.urllib.request, 'urlopen', opened)
+    result = peers.town_info(town, 'zerzura')
+    assert result['contact'] == {'town': 'zerzura', 'operation': 'describe', 'agents': []}
+    assert len(calls) == 1 and calls[0].get_method() == 'GET'
+    assert calls[0].get_header('Authorization') is None
+    assert 'secret' not in json.dumps(result)
+    with pytest.raises(peers.PeerError, match='not advertised'):
+        peers.town_info(town, 'missing')

@@ -1,0 +1,12 @@
+[Unit]
+Description=Academic Wasteland hackathon demonstration stage
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Public/software/academic-wasteland/pangenome-town
+ExecStart=%h/Public/software/academic-wasteland/pangenome-town/.venv/bin/pangenome-town dashboard --towns %h/Public/software/academic-wasteland/ubar/town.toml %h/Public/software/academic-wasteland/yamatai/town.toml %h/Public/software/academic-wasteland/camelot/town.toml --port 8393
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -275,3 +275,47 @@ def test_release_is_withheld_when_outputs_exceed_the_scope(setup, monkeypatch):
     assert result["status"]["state"] == "failed", result["status"]
     assert result["metadata"]["refusal"]["reason"] == "output-exceeds-scope"
     assert not result["artifacts"] or all(artifact["name"] == "semantic-validation-report.json" for artifact in result["artifacts"])
+
+
+@needs_bcftools
+def test_revoked_during_compute_withholds_results(setup, monkeypatch):
+    from pangenome_town.compute import runner
+    current = {'status': 'active'}
+    original = runner.run_task
+    def run(*args, **kwargs):
+        result = original(*args, **kwargs)
+        current['status'] = 'revoked'
+        return result
+    monkeypatch.setattr(runner, 'run_task', run)
+    document = setup['task']()
+    result = send(setup['node'](status_checker=lambda _: current['status']), document,
+                  setup['present'](document, both(setup)))
+    assert result['status']['state'] != 'completed'
+    assert {a['name'] for a in result.get('artifacts', [])} <= {'semantic-validation-report.json'}
+    assert result['metadata']['refusal']['gate'] == 'authority'
+
+
+@needs_bcftools
+@pytest.mark.parametrize('omit_qualification', [False, True])
+def test_strict_certification_is_enforced_by_runner(setup, omit_qualification):
+    town = setup['town']
+    issuer_key, agent_key = keys.generate(), keys.generate()
+    town.extra['trust']['anchors'] = {COUNCIL: keys.public_key_text(issuer_key)}
+    kinds = ['DataAccessAuthorization', 'EthicsApproval', 'Qualification', 'ComputeAuthorization']
+    town.extra['trust']['certification'] = {
+        'task_scopes': {f'{PG}AlleleFrequencyTask': AGG},
+        'requirements': [{'type': kind, 'per_dataset': kind == 'DataAccessAuthorization'} for kind in kinds],
+        'issuers': [{'issuer': COUNCIL, 'types': kinds, 'scopes': [AGG], 'datasets': [DATASET]}],
+    }
+    contract.render(town, town.city_root / 'contract')
+    document = setup['task']()
+    document['requestedBy']['@id'] = HOLDER
+    documents = [creds.issue(issuer=COUNCIL, issuer_key=issuer_key, types=kind,
+                 subject={'id': HOLDER, 'holderKey': keys.public_key_text(agent_key), 'scope': AGG,
+                          'dataset': DATASET, 'taskDigest': creds.task_digest(document), 'audience': TOWN})
+                 for kind in kinds if not (omit_qualification and kind == 'Qualification')]
+    presentation = creds.present(holder=HOLDER, holder_key=agent_key, credentials=documents, accreditations=[],
+                                  task=document, audience=TOWN)
+    result = send(setup['node'](), document, presentation)
+    assert result['status']['state'] == ('input-required' if omit_qualification else 'completed'), result['status']
+    assert result['metadata']['authority']['certification']['ok'] is not omit_qualification

@@ -1,0 +1,11 @@
+[Unit]
+Description=Read one phenotype/pangenome paper per hour for Bloodninja
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=30
+Unit=ubar-literature.service
+
+[Install]
+WantedBy=timers.target
