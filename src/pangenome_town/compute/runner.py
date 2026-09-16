@@ -85,6 +85,10 @@ class SemanticGate:
         if isinstance(target_manifest, (str, Path)):
             target_manifest = ContractManifest.load(Path(target_manifest))
         target_reasoner = reasoner or self.reasoner
+        if target_manifest is None:
+            raise SemanticPolicyError(
+                "Semantic gating cannot evaluate without a trusted contract manifest"
+            )
 
         if target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
             result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
