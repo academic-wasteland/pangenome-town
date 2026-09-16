@@ -58,7 +58,16 @@ class EnvoyState:
         return os.environ.get("GC_SERVICE_PUBLIC_URL") or f"{self.town.supervisor_url.rstrip('/')}/v0/city/{self.town.name}/svc/envoy"
 
     def describe(self) -> dict[str, Any]:
+        from .contacts import directory
         return {
+            "residents": directory(self.town, public=True)["residents"],
+            "interests": self.town.extra.get("research", {}).get("interests", []),
+            "services": ([{"operation": "phenotype-search", "resident": "phenomancer",
+                           "backend": self.town.extra["phenotype_search"].get("backend", "baseline"),
+                           "inputs": {"phenotypes": "1–30 HP, MP or UPHENO identifiers", "limit": "1–50; default 10",
+                                      "method": "indigena or baseline", "measure": "lin or resnik (baseline only)"},
+                           "outputs": "ranked mouse MGI genes, similarity scores and model provenance"}]
+                         if self.town.extra.get("phenotype_search", {}).get("enabled") else []),
             "name": self.town.name,
             "display": self.town.display,
             "population": self.town.population,

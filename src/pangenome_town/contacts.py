@@ -5,13 +5,14 @@ import tomllib
 def directory(town, *, public=False):
     residents = []
     for path in sorted((town.city_root / 'agents').glob('*/agent.toml')):
-        if public and path.parent.name not in {'q', 'bloodninja', 'irb', 'dac'}:
+        if public and path.parent.name not in {'q', 'bloodninja', 'irb', 'dac', 'bloodninja_scout', 'phenomancer', 'sam', 'bob'}:
             continue
         try:
             settings = tomllib.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        residents.append({'name': path.parent.name, 'role': str(settings.get('description', 'Town resident'))})
+        residents.append({'name': path.parent.name, 'role': str(settings.get('description', 'Town resident')),
+                          'interests': settings.get('interests', [])})
     purpose = ('Credential applications and their review by the town operator.' if town.kind == 'authority'
                else f'{town.population} pangenome resources and bounded research queries.')
     return {'ok': True, 'resident': 'contact', 'mode': 'directory', 'town': town.name,

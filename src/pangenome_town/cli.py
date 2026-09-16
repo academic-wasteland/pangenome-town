@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,19 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command", required=True)
     from .cli_delegation import add_parser
     add_parser(commands)
+    commands.add_parser("phenotype-prepare", help="unpack the configured INDIGENA ontology")
+    phen = commands.add_parser("phenotype-search", help="INDIGENA Lin/Resnik BMA gene search")
+    phen.add_argument("--phenotypes", nargs="+", required=True)
+    phen.add_argument("--limit", type=int, default=10)
+    phen.add_argument("--method", choices=["indigena", "baseline"])
+    phen.add_argument("--measure", choices=["lin", "resnik"], default="lin")
+    lit = commands.add_parser("literature-collect", help="search once per source/topic/date and cache papers")
+    lit.add_argument("--wake", action="store_true")
+    commands.add_parser("literature-candidates", help="cached papers and published recipient interests")
+    share = commands.add_parser("literature-share", help="share one selected paper with matching residents")
+    share.add_argument("--paper", required=True)
+    share.add_argument("--to", action="append", required=True, help="town/resident; repeat for up to five")
+    share.add_argument("--reason", required=True)
     resources = commands.add_parser("resources", help="published local result collections")
     resources.add_argument("--read", help="resource ID to read as a bounded base64 chunk")
     resources.add_argument("--offset", type=int, default=0)
@@ -239,6 +253,30 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         dashboard.serve(towns, bind=arguments.bind, port=arguments.port)
         return 0
     town = _town(arguments)
+    if arguments.command.startswith("phenotype-"):
+        from . import phenotypes
+        try:
+            result = (phenotypes.prepare(town) if arguments.command == "phenotype-prepare" else
+                      phenotypes.search(town, vars(arguments)))
+        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+            _print({"ok": False, "error": str(error)})
+            return 2
+        _print(result)
+        return 0
+    if arguments.command.startswith("literature-"):
+        from . import literature
+        if arguments.command == "literature-collect":
+            result = literature.collect(town, arguments.wake)
+        elif arguments.command == "literature-candidates":
+            result = literature.candidates(town)
+        else:
+            try:
+                result = literature.share(town, arguments.paper, arguments.to, arguments.reason)
+            except ValueError as error:
+                _print({"ok": False, "error": str(error)})
+                return 2
+        _print(result)
+        return 0
     if arguments.command == "envoy":
         socket_path = arguments.socket or os.environ.get("GC_SERVICE_SOCKET")
         if not socket_path:

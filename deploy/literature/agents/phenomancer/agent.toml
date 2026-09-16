@@ -1,0 +1,8 @@
+description = "Phenotype semantic-similarity search using INDIGENA Lin/Resnik BMA and UPheno; mouse gene prioritization."
+interests = ["phenotypes", "HPO", "MONDO", "disease gene prioritization"]
+provider = "qwen"
+session = "acp"
+upstream = "vllm"
+idle_timeout = "30m"
+max_active_sessions = 1
+nudge = "Check unread mail, complete bounded research work, mark handled mail read, then idle."

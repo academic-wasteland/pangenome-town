@@ -1,0 +1,8 @@
+description = "Bloodninja\u2019s literature apprentice: reads phenotype ontology and pangenome research; shares one relevant paper per hour."
+interests = ["phenotypes", "HPO", "MONDO", "pangenomes"]
+provider = "qwen"
+session = "acp"
+upstream = "vllm"
+idle_timeout = "30m"
+max_active_sessions = 1
+nudge = "Check unread mail, complete bounded research work, mark handled mail read, then idle."
