@@ -676,10 +676,17 @@ async def test_tes_compute_runner_dispatch_and_poll():
 
 
 @pytest.mark.asyncio
-async def test_vg_chunk_tes_dispatch(towns):
+async def test_vg_chunk_tes_dispatch(towns, tmp_path):
     import respx
 
     from pangenome_town.tools import graph
+
+    # Ensure ubar town has a dummy graph file if vg is not installed
+    town = towns["ubar"]
+    if not town.has_graph:
+        dummy_graph = tmp_path / "toy.gbz"
+        dummy_graph.write_bytes(b"dummy gbz content")
+        town = dataclasses.replace(town, graph=dummy_graph)
 
     # 1. Setup mock reasoner strictly returning 'entailed'
     class EntailedReasoner:
@@ -692,7 +699,7 @@ async def test_vg_chunk_tes_dispatch(towns):
     gate = SemanticGate(reasoner=EntailedReasoner())
 
     # 2. Build VG chunk operation task
-    tools = graph.GraphTools(towns["ubar"])
+    tools = graph.GraphTools(town)
     region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
     tes_payload = tools.build_tes_chunk_task(region)
 
