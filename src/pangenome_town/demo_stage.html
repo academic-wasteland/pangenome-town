@@ -70,7 +70,7 @@ async function displayEvent(event){
  if(reduceMotion||instant){text.textContent=event.text;}else await new Promise(resolve=>{const start=performance.now(),duration=Math.min(1400,event.text.length*12),ticket=generation;let done=false;const finish=()=>{if(done)return;done=true;text.textContent=event.text;text.classList.remove('typing');if(currentAnimation===finish)currentAnimation=null;resolve();};text.classList.add('typing');currentAnimation=finish;function type(now){if(done)return;if(ticket!==generation||instant||reduceMotion){finish();return;}const n=Math.ceil(event.text.length*Math.min(1,(now-start)/duration));text.textContent=event.text.slice(0,n);if(nearBottom)feed.scrollTop=feed.scrollHeight;if(n<event.text.length)requestAnimationFrame(type);else finish();}requestAnimationFrame(type);});
  if(nearBottom)feed.scrollTop=feed.scrollHeight;
 }
-async function drain(){if(playing)return;playing=true;const ticket=generation;while(queue.length&&ticket===generation){if($('#inspector').open)await new Promise(resolve=>$('#inspector').addEventListener('close',resolve,{once:true}));if(ticket===generation&&queue.length)await displayEvent(queue.shift());}playing=false;if(instant)feed.scrollTop=feed.scrollHeight;instant=false;updateQueue();if(queue.length)drain();}
+async function drain(){if(playing)return;playing=true;const ticket=generation;while(queue.length&&ticket===generation){if($('#inspector').open||window.demoNarrationPaused){await new Promise(resolve=>setTimeout(resolve,100));continue;}if(ticket===generation&&queue.length)await displayEvent(queue.shift());}playing=false;if(instant)feed.scrollTop=feed.scrollHeight;instant=false;updateQueue();if(queue.length)drain();}
 function updateQueue(){$('#queue-label').textContent=queue.length?`${queue.length} recorded messages to reveal · execution is not delayed`:'Recorded workflow messages · click to inspect';}
 function layoutMap(compact){
  const layouts=compact?{human:[22,5,136,55],provider:[442,5,136,55],analyst:[219,5,162,58],ubar:[62,91,196,73],yamatai:[342,91,196,73]}:{human:[22,20,136,55],provider:[442,20,136,55],analyst:[219,78,162,58],ubar:[62,171,196,73],yamatai:[342,171,196,73]};
@@ -90,6 +90,7 @@ function renderResult(run){
  requestAnimationFrame(()=>document.querySelectorAll('.fill').forEach(bar=>bar.style.width=bar.dataset.width+'%'));
 }
 function receive(data){
+ if(window.demoNarrationPaused){window.demoDeferredSnapshot=data;return;}
  snapshot=data;const run=data.run;
  if((run?.id||null)!==runId){generation++;currentAnimation?.();currentAnimation=null;queue=[];seen=0;$('#edges').replaceChildren();$('#packet').setAttribute('hidden','');document.querySelectorAll('.node').forEach(n=>n.classList.remove('active'));$('#flow-label').textContent='Ready for your question';runId=run?.id||null;feed.innerHTML='<div class="empty"><span class="prompt">&gt; waiting for your question_</span>Start a comparison. The transcript will build from recorded workflow events.</div>';$('#chart').dataset.marker='';runStart=run?Date.parse(run.created):0;}
  if(run){const incoming=run.events.filter(e=>e.seq>seen);if(incoming.length){seen=incoming.at(-1).seq;queue.push(...incoming);if(firstLoad)instant=true;drain();}}
@@ -109,4 +110,4 @@ $('#close').onclick=()=>$('#inspector').close();$('#inspector').onclick=e=>{if(e
 setInterval(()=>{const run=snapshot?.run;let seconds=0;if(run){seconds=['completed','failed'].includes(run.state)?run.events.at(-1)?.elapsed||0:(Date.now()-runStart)/1000;}seconds=Math.floor(seconds);$('#clock').textContent=Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');},500);
 document.querySelectorAll('.node').forEach(node=>{node.setAttribute('tabindex','0');node.setAttribute('role','button');node.style.cursor='pointer';node.setAttribute('aria-label','Inspect '+labels[node.dataset.node]);const inspect=()=>{const e=snapshot?.run?.events.findLast(e=>e.from===node.dataset.node||e.to===node.dataset.node);if(e)openEvent(e);};node.onclick=inspect;node.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();inspect();}};});
 poll();
-</script></body></html>
+</script><script>window.demoControl={act:act,pauseDisplay(value){window.demoNarrationPaused=value;if(value)currentAnimation?.();else{if(window.demoDeferredSnapshot){receive(window.demoDeferredSnapshot);window.demoDeferredSnapshot=null;}drain();}}};</script><script src="/demo-assets/nacl-fast.min.js"></script><script src="/demo-assets/inspection.js"></script><script src="/demo-assets/autorun.js"></script></body></html>

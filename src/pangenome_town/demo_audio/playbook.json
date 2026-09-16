@@ -1,0 +1,21 @@
+{
+  "cohorts": [
+    {"id":"cohorts-intro","text":"Ubar holds the Saudi cohort. Yamatai holds the Japanese cohort. We will ask both towns to compare variant frequencies, returning aggregate counts only."},
+    {"id":"cohorts-approval","text":"The request has split between the two towns. Sakura Board accredits the analysis lab, which certifies our agent. You can inspect that signed chain. But certification is not data access: Ubar still needs to grant permission."},
+    {"id":"cohorts-compute","text":"This automatic demonstration now grants Ubar's permission for the exact task, for ten minutes. Both workers query the real pangenome data. The signatures and permissions are checked again before results leave the workers."},
+    {"id":"cohorts-results","text":"The aggregate comparison is ready. The chart shows five sites for readability. View all variants opens every computed row, and the download buttons save the complete aggregate table."},
+    {"id":"cohorts-boundary","text":"Now we try a different request: exporting individual genotypes. It is refused before computation. Our permission covered aggregate analysis of one exact task. It did not authorize individual data export."},
+    {"id":"cohorts-end","text":"We have a scientific result, an inspectable chain of signed authority, and a permission boundary that still holds. This demonstration is complete. You can explore the trust keys or download the aggregate results."}
+  ],
+  "visitor": [
+    {"id":"visitor-intro","text":"This visitor brings their own variant file and needs somebody else's compute. Yamatai has access to the D D B J cluster. We will follow the request, the ethics approval, and the real scheduler."},
+    {"id":"visitor-approval","text":"The visitor has granted data permission, and Yamatai has compute permission. But those do not replace ethics approval. Camelot's I R B approval is missing, so no file has been transferred and no job submitted."},
+    {"id":"visitor-compute","text":"This automatic demonstration now signs Camelot's demo approval. It binds the exact file, analysis, and destination. Yamatai may transfer the file and submit a one CPU job to the real Slurm scheduler."},
+    {"id":"visitor-queue","text":"The job is still in progress. The page shows the actual scheduler observations. Queue time varies; we will show results only when the cluster has finished and the release checks pass."},
+    {"id":"visitor-results","text":"The cluster analysis has finished, and permissions passed again before release. The visitor receives aggregate allele counts. You can inspect the job evidence, view every result row, and download the table."},
+    {"id":"visitor-end","text":"The visitor supplied data, Yamatai supplied compute, and Camelot supplied the required demo ethics approval. Their responsibilities are distinct and inspectable. The other demonstration has not been started or reset."}
+  ],
+  "common": [
+    {"id":"demo-failed","text":"The workflow stopped or a check failed. No successful result is being claimed. Inspect the recorded error on the page before resetting this demonstration."}
+  ]
+}

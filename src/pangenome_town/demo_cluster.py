@@ -113,6 +113,7 @@ class ClusterStage(DemoStage):
             self.policies['yamatai'] = {'task_scopes': {'aggregate': SCOPE},
                                        'requirements': [{'type': k, 'per_dataset': k == 'DataAccessAuthorization'} for k in KINDS],
                                        'issuers': rules}
+            self._setup_trust('yamatai', dataset)
             self.documents['yamatai'] = [self._issue('yamatai', k) for k in KINDS if k != 'EthicsApproval']
             self.run['decisions']['yamatai'] = self._assess()
             self._event('visitor', 'yamatai', 'My data. Your compute.',

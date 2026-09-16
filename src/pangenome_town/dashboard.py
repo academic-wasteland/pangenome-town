@@ -927,6 +927,26 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
                 elif route == "/demo/visitor":
                     page = Path(__file__).with_name('demo_cluster.html').read_text().replace('__COCKPIT_TOKEN__', state.token)
                     self._send(HTTPStatus.OK, page.encode(), 'text/html; charset=utf-8')
+                elif route in ("/demo-assets/inspection.js", "/demo-assets/autorun.js"):
+                    filename = 'demo_inspection.js' if route.endswith('/inspection.js') else 'demo_autorun.js'
+                    script = Path(__file__).with_name(filename).read_bytes()
+                    self._send(HTTPStatus.OK, script, 'text/javascript; charset=utf-8')
+                elif route == '/demo-assets/nacl-fast.min.js':
+                    script = (Path(__file__).with_name('demo_vendor') / 'nacl-fast.min.js').read_bytes()
+                    self._send(HTTPStatus.OK, script, 'text/javascript; charset=utf-8')
+                elif route.startswith('/demo-audio/'):
+                    filename = route.removeprefix('/demo-audio/')
+                    folder = Path(__file__).with_name('demo_audio')
+                    manifest = json.loads((folder / 'playbook.json').read_text())
+                    allowed = {'playbook.json', *(note['id'] + '.mp3' for group in manifest.values() for note in group)}
+                    if filename not in allowed:
+                        self._json(HTTPStatus.NOT_FOUND, {'error': 'Unknown narration asset'})
+                        return
+                    self._send(HTTPStatus.OK, (folder / filename).read_bytes(),
+                               'application/json' if filename.endswith('.json') else 'audio/mpeg')
+                elif route in ('/api/demo/trust', '/api/demo-cluster/trust'):
+                    stage = state.cluster_stage() if route.startswith('/api/demo-cluster/') else state.demo_stage()
+                    self._json(HTTPStatus.OK, stage.trust_bundle())
                 elif route == "/api/demo-cluster":
                     self._json(HTTPStatus.OK, state.cluster_stage().snapshot())
                 elif route == "/api/demo":

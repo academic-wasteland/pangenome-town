@@ -9,7 +9,7 @@ service keeps the stage available; it does not replace the existing cockpit on
 | Time | Action | What to say |
 | --- | --- | --- |
 | 0:00–0:20 | Start with a clean stage. | “Ubar has the Saudi cohort. Yamatai has the Japanese cohort. Let's compare the same genomic region.” |
-| 0:20–0:45 | Click **Compare cohorts**. Let the green transcript build. | “The request splits into two cohort analyses. The agent's qualification is accepted from Sakura; Camelot is not required. But a qualification is not permission to use Ubar's data.” |
+| 0:20–0:45 | Click **Compare cohorts**. Let the green transcript build. | “The request splits into two cohort analyses. The agent's qualification comes through Sakura's accredited lab; Camelot is not required. But a qualification is not permission to use Ubar's data.” |
 | 0:45–1:10 | Click Ubar's **Dataset permission** row. Close the explanation, then click **Approve this analysis**. | “I approve this exact region and aggregate counts for ten minutes. This creates a real signed credential.” |
 | 1:10–1:50 | Follow the routes and the chart. Click a result message if useful. | “Both workers calculate allele counts from the real JaSaPaGe VCF. They check permissions again before releasing results. We get a comparison without releasing individual genotypes.” |
 | 1:50–2:20 | Click **Try individual genotype export**. | “Can the same permission be reused to download individuals? No. The scope and the exact task no longer match. The export never starts.” |
@@ -182,3 +182,149 @@ These commands leave the original comparison's state intact. Automated tests in
 check absent IRB approval, file/task/destination changes, revocation, stale or
 duplicate approval, and malformed input. The browser rehearsal verifies real
 Slurm completion, counts, inspectable evidence, and navigation between the cases.
+
+## Narrated auto-run, pause and stop
+
+Each page has its own **Auto-run this demo** button. It explicitly grants the
+approvals for that demonstration, so no further click is needed. It never starts
+or resets the other case. Reset remains a separate operation on each page. A
+completed case must be reset before another auto-run; there is no silent reset.
+The original manual controls still work outside auto-run.
+
+Narration drives the sequence, rather than running as an unrelated soundtrack:
+
+1. Introduce the case, then create the request.
+2. Wait for the actual missing-permission decision and explain it.
+3. Begin the approval explanation and trigger this case's demo approval.
+4. Wait for both the explanation and real computation before narrating results.
+5. In the cohort case, trigger the separate export attempt and narrate its actual
+   refusal. In the visitor case, narrate the actual Slurm completion and return.
+
+**Pause** freezes audio, transcript progression, presentation updates and later
+automatic actions together. **Resume** continues the same clip and sequence.
+Pausing the native audio player also pauses the sequence. A submitted job keeps
+running in the background; fresh server snapshots are buffered for display on
+resume. **Stop** interrupts the automatic sequence and audio, but does not cancel
+already submitted computation. Switching pages stops that page's narration and
+automation. No later approval is issued after stop; an action already submitted
+cannot be undone by stopping the presentation.
+
+The spoken notes are generated audio bundled with the website, with no runtime
+speech service or browser voice installation required. Each case has about
+76 seconds of narration at normal speed, plus any wait for actual computation.
+Audio controls and **Presenter notes** allow replaying individual sections.
+Turning off **Audio narration** runs the same sequence with visible notes.
+If playback is blocked, auto-run pauses rather than letting the workflow race
+ahead: press Resume/play, or turn off audio and resume. If a job is still waiting
+at about 2:30 of active presentation time, auto-run stops waiting and leaves the
+live job status visible; it never pretends completion. Explicitly paused time is
+excluded from that presentation budget. Remote job limits remain independent.
+
+## Inspect cryptographic trust and all results
+
+**Inspect trust & public keys** opens the scoped web of trust. Each receiver's
+qualification chain is:
+
+```text
+Receiver's pinned Sakura Board root
+  → signed accreditation of Sakura Analysis Lab
+    → signed qualification of the analysis agent
+```
+
+The root permits one delegation for aggregate analysis of the relevant dataset.
+The lab has no onward delegation and gains no authority to issue data, compute
+or ethics permission. Those require separately accepted issuers. For example,
+the visitor's data permission and Camelot IRB approval remain distinct.
+
+Click any key for its full public Ed25519 key and SHA-256 fingerprint (of the raw
+32-byte key), or inspect a permission for its signed document, scope, expiry,
+status, task and receiver rule. The lab's public key is resolved from its signed
+accreditation, not pinned directly as a trust anchor. The shared production
+certification evaluator checks delegation scope, dataset, depth, signatures,
+status, validity and holder binding. Revoking, altering or narrowing the
+accreditation blocks the demo even if the agent's credential still has a valid
+signature. This is scoped delegation, not unrestricted transitive trust.
+
+**Verify signatures in this browser** verifies every accreditation, credential
+and holder presentation locally with bundled TweetNaCl.js. No server-side
+success flag substitutes for the cryptographic operation. **Test a tampered
+copy** changes a signed scope in browser memory and demonstrates signature
+failure without changing live permissions. **Download public proof bundle**
+exports the signed evidence, public keys, receiver policies, tasks and current
+status observations. It never includes private keys. A valid signature alone
+is not authorization: expiry, revocation and the receiver's rules remain
+separate checks. The inspector freshly evaluates policy; its current result can
+therefore differ from an earlier recorded release after a credential expires.
+
+These are real signatures using isolated, per-run demo keys, not verified
+institutional identities or a production PKI. The demo's status registry is
+local and in memory. The receiver's pinned roots are the trust starting point;
+cryptography cannot independently prove that a public key belongs to a named
+institution. Key fingerprints allow comparing the actual keys, and the UI
+labels these boundaries explicitly.
+
+The charts remain small for presenting. **View all variants** opens a searchable
+table of every released aggregate row (510 in the first rehearsal). **Download
+all · TSV** and **Download all · JSON** include every computed row, even if the
+table is filtered. These are all results for the analysed region, not the whole
+source VCF and not individual genotypes. The existing individual-export refusal
+still applies. No new compute or genotype export is performed by these buttons.
+
+Full browser rehearsal (explicitly resets each case; submits one small real
+DDBJ job; tests audio at 4× speed while website defaults remain 1×):
+
+```sh
+.venv/bin/python examples/inspection_autorun_demo.py
+```
+
+It verifies pause/resume and stop, separate runs and resets, browser signature
+verification and tamper rejection, every displayed variant, and complete TSV/JSON
+downloads under filtering. The full test suite also checks delegation revocation,
+scope/depth violations, signature alteration, and narration asset access rules.
+Audio regeneration instructions and model provenance are in
+`src/pangenome_town/demo_audio/README.md`.
+
+## Public website: recorded playback
+
+The public version at **https://leechuck.de/academic-wasteland/** is an explicitly
+labelled replay of recorded real runs. It serves static files only. It retains
+narrated auto-run, synchronized pause/resume, stop, independent case resets,
+cryptographic inspection and complete aggregate downloads. It has no connection
+to the cockpit, uploads or live Slurm controls. A browser-local adapter replays
+captured events; playback timing is shortened, while event timestamps and signed
+evidence remain those of the real run. Each tab's state is separate and stored
+in that browser session, so visitors cannot reset someone else's presentation.
+
+Recorded signatures can be verified cryptographically after the run. Status and
+policy decisions shown on this version are **historical**; the ten-minute
+permissions will expire and are not refreshed or reissued by replaying them.
+The public page never claims a new institutional approval or a new computation.
+The local URLs on port 8393 remain the live versions.
+
+To capture and export (resets each local case separately and submits one small
+synthetic DDBJ job):
+
+```sh
+.venv/bin/python examples/export_demo_site.py --output /tmp/site/academic-wasteland
+```
+
+To rebuild from those recordings without running new compute:
+
+```sh
+.venv/bin/python examples/export_demo_site.py \
+  --recordings /tmp/site/academic-wasteland/assets/recordings.json \
+  --output /path/to/leechuck.de/academic-wasteland
+```
+
+Only public demo keys, signatures, aggregate output and task metadata are
+exported. No private keys or local cockpit token are included. The static site
+is deployed to `lc2:/var/www/lc2/academic-wasteland/` with a reviewed rsync dry-run;
+never add `--delete` to the site's deployment. The source of the reusable UI and
+exporter remains this repository; the generated site is also tracked in the
+personal website repository.
+
+Verify the public site without submitting any computation:
+
+```sh
+.venv/bin/python examples/public_replay_demo.py
+```

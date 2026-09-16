@@ -123,3 +123,77 @@ def test_http_stage_shares_cockpit_guards(stage, towns):
         server.shutdown()
         server.server_close()
         state.log.close()
+
+
+def test_public_trust_bundle_has_real_delegation_and_verifiable_keys(stage):
+    from pangenome_town.authority import keys
+    from pangenome_town.demo_stage import HOLDER, LAB, PROVIDER
+    stage.start()
+    bundle = stage.trust_bundle()
+    for receiver in bundle['receivers']:
+        qualification = next(r for r in receiver['decision']['requirements'] if r['type'] == 'Qualification')
+        assert qualification['evidence']['issuer'] == LAB
+        assert qualification['evidence']['root'] == PROVIDER
+        assert LAB not in receiver['anchors']
+        assert receiver['verification']['key_sources'][LAB] == 'accreditation'
+        public = {k['id']: keys.parse_public(k['public_key']) for k in receiver['keys']}
+        presentation = receiver['presentation']
+        assert keys.verify(presentation, public[HOLDER])
+        for document in presentation['credentials'] + presentation['accreditations']:
+            assert keys.verify(document, public[document['issuer']])
+        assert all(len(k['fingerprint']) == 64 for k in receiver['keys'])
+    assert 'PRIVATE KEY' not in json.dumps(bundle)
+
+
+@pytest.mark.parametrize('change', ['revoked', 'tampered', 'wrong-scope', 'depth'])
+def test_delegation_changes_block_execution(stage, change):
+    from pangenome_town.authority import keys
+    from pangenome_town.demo_stage import PROVIDER
+    run = stage.start()['run']
+    doc = stage.accreditations['ubar'][0]
+    if change == 'revoked':
+        stage.statuses[doc['id']] = 'revoked'
+    elif change == 'depth':
+        stage.policies['ubar']['issuers'][0]['delegation_depth'] = 0
+    else:
+        doc['credentialSubject']['scopes'] = ['unrelated']
+        if change == 'wrong-scope':
+            stage.accreditations['ubar'][0] = keys.sign(doc, stage.signers[PROVIDER], PROVIDER+'#key-1')
+    assert not stage.trust_bundle()['receivers'][0]['decision']['ok']
+    with pytest.raises(StageError, match='no longer current'):
+        stage.approve(run['id'])
+    assert not any(e['kind'] == 'compute' for e in stage.run['events'])
+
+
+def test_inspection_and_audio_routes(stage, towns):
+    from pathlib import Path
+
+    from pangenome_town import demo_stage
+    stage.start()
+    state = dashboard.DashboardState([towns['ubar'], towns['yamatai']])
+    state._stage = stage
+    server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.make_handler(state))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    try:
+        with urllib.request.urlopen(base + '/api/demo/trust') as response:
+            assert len(json.load(response)['receivers']) == 2
+        with urllib.request.urlopen(base + '/demo-audio/playbook.json') as response:
+            manifest = json.load(response)
+        assert set(manifest) == {'cohorts', 'visitor', 'common'}
+        folder = Path(demo_stage.__file__).with_name('demo_audio')
+        for group in manifest.values():
+            for note in group:
+                content = (folder / (note['id'] + '.mp3')).read_bytes()
+                assert len(content) > 1000 and content.startswith(b'ID3')
+        with urllib.request.urlopen(base + '/demo-audio/cohorts-intro.mp3') as response:
+            assert response.headers['Content-Type'] == 'audio/mpeg'
+            assert response.read().startswith(b'ID3')
+        for path in ['/demo-audio/README.md', '/demo-audio/../demo_stage.py']:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(base + path)
+            assert error.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        state.log.close()

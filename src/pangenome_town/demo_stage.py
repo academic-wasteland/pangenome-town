@@ -24,6 +24,7 @@ SCOPE = 'urn:wasteland:demo:aggregate'
 RAW = 'urn:wasteland:demo:individual-genotypes'
 HOLDER = 'urn:wasteland:demo:comparison-agent'
 PROVIDER = 'urn:wasteland:demo:sakura-board'
+LAB = 'urn:wasteland:demo:sakura-analysis-lab'
 KINDS = ('Qualification', 'EthicsApproval', 'ComputeAuthorization', 'DataAccessAuthorization')
 
 
@@ -44,6 +45,7 @@ class DemoStage:
         self.tasks = {}
         self.policies = {}
         self.statuses = {}
+        self.accreditations = {}
 
     def preflight(self):
         checks = [{'label': 'Local bcftools', 'ok': bool(shutil.which('bcftools'))}]
@@ -80,7 +82,7 @@ class DemoStage:
             return event
 
     def _issue(self, town, kind):
-        issuer = PROVIDER if kind == 'Qualification' else f'urn:wasteland:demo:{town}:{kind}'
+        issuer = LAB if kind == 'Qualification' else f'urn:wasteland:demo:{town}:{kind}'
         task = self.tasks[town]
         subject = {'id': HOLDER, 'holderKey': keys.public_key_text(self.holder), 'scope': SCOPE,
                    'dataset': task['usesDataset'][0]}
@@ -95,12 +97,61 @@ class DemoStage:
         self.statuses[doc['id']] = 'active'
         return doc
 
+    def _anchors(self):
+        # The delegated lab key must be resolved through its signed accreditation.
+        return {i: keys.public_key_text(k) for i, k in self.signers.items() if i != LAB}
+
+    def _setup_trust(self, town, dataset):
+        self.signers.setdefault(LAB, keys.generate())
+        for rule in self.policies[town]['issuers']:
+            if rule['issuer'] == PROVIDER:
+                rule['delegation_depth'] = 1
+        doc = credentials.accreditation(
+            accreditor=PROVIDER, accreditor_key=self.signers[PROVIDER], subject_issuer=LAB,
+            subject_public_key=keys.public_key_text(self.signers[LAB]), roles=[],
+            types=['Qualification'], scopes=[SCOPE], datasets=[dataset], delegation_depth=0,
+            valid_days=1)
+        self.accreditations[town] = [doc]
+        self.statuses[doc['id']] = 'active'
+
+    def trust_bundle(self):
+        """Public evidence only; refreshed decisions are distinct from recorded release checks."""
+        with self.lock:
+            if not self.run:
+                return {'run_id': None, 'receivers': []}
+            receivers = []
+            for town, task in self.tasks.items():
+                presentation = credentials.present(
+                    holder=HOLDER, holder_key=self.holder, credentials=self.documents[town],
+                    accreditations=self.accreditations.get(town, []), task=task,
+                    audience=f'urn:wasteland:demo:{town}')
+                anchors = self._anchors()
+                verified = credentials.verify_presentation(
+                    presentation, task, audience=f'urn:wasteland:demo:{town}', anchors=anchors,
+                    status_checker=lambda doc: self.statuses.get(doc['id'], 'unknown'), revocation='required')
+                public = {i: keys.public_key_text(k) for i, k in self.signers.items()}
+                public[HOLDER] = keys.public_key_text(self.holder)
+                receivers.append({'town': town, 'policy': certification.describe(self.policies[town]),
+                                  'task': task, 'presentation': presentation, 'anchors': anchors,
+                                  'keys': [{'id': i, 'public_key': value,
+                                            'fingerprint': hashlib.sha256(keys._b64decode(value.split(':', 1)[1])).hexdigest(),
+                                            'source': 'holder proof' if i == HOLDER else verified.key_sources.get(i, 'unresolved')}
+                                           for i, value in public.items()],
+                                  'verification': verified.as_dict(), 'decision': self._assess(town),
+                                  'status': {d['id']: self.statuses.get(d['id'], 'unknown')
+                                             for d in [*self.documents[town], *self.accreditations.get(town, [])]}})
+            return copy.deepcopy({'run_id': self.run['id'], 'checked_at': datetime.now(UTC).isoformat(),
+                                  'scheme': 'Ed25519 over canonical JSON (sorted keys, compact UTF-8; top-level proof omitted)',
+                                  'authority_mode': 'Isolated demo authorities with real signatures; keys generated per run.',
+                                  'status_source': 'Demo in-memory status registry; not an external revocation service.',
+                                  'receivers': receivers})
+
     def _assess(self, town, task=None):
         task = task or self.tasks[town]
         presentation = credentials.present(holder=HOLDER, holder_key=self.holder, credentials=self.documents[town],
-                                             accreditations=[], task=task, audience=f'urn:wasteland:demo:{town}')
+                                             accreditations=self.accreditations.get(town, []), task=task, audience=f'urn:wasteland:demo:{town}')
         return certification.evaluate(self.policies[town], task, presentation, audience=f'urn:wasteland:demo:{town}',
-                                      anchors={i: keys.public_key_text(k) for i, k in self.signers.items()},
+                                      anchors=self._anchors(),
                                       status_checker=lambda doc: self.statuses.get(doc['id'], 'unknown'))
 
     def start(self):
@@ -133,6 +184,7 @@ class DemoStage:
                 self.policies[name] = {'task_scopes': {'aggregate': SCOPE, 'genotype-export': RAW},
                                       'requirements': [{'type': k, 'per_dataset': k == 'DataAccessAuthorization'} for k in KINDS],
                                       'issuers': rules}
+                self._setup_trust(name, dataset)
                 self.documents[name] = [self._issue(name, k) for k in KINDS if name == 'yamatai' or k != 'DataAccessAuthorization']
                 self.run['cohorts'][name] = {'samples': len(town.samples), 'state': 'waiting'}
                 self._event('analyst', name, f'{name.title()}: analysis request',
@@ -141,7 +193,7 @@ class DemoStage:
                 decision = self._assess(name)
                 self.run['decisions'][name] = decision
                 self._event('provider', name, 'Qualification verified',
-                            'Sakura Board certifies this analysis agent. This town accepts Sakura for aggregate analysis; Camelot is not required.',
+                            'Sakura Board accredits Sakura Analysis Lab, which certifies this agent. This town accepts that scoped chain for aggregate analysis; Camelot is not required.',
                             kind='credential', detail={'decision': decision, 'credential': self.documents[name][0],
                                                        'policy': certification.describe(self.policies[name])})
             if self.run['decisions']['ubar']['ok'] or not self.run['decisions']['yamatai']['ok']:
