@@ -29,3 +29,15 @@ creation mode.
 Shell-file backups and the earlier research-only sweep log are at:
 `/lustre10/home/leechuck/.config/wasteland-permission-backups/20260916T105704/`.
 These backups are now included in the shared permissions as well.
+
+## Subsequent SSH restoration
+
+At the operator’s request, restored `.ssh` to 0700, `id_ed25519` and
+`authorized_keys` to 0600, and `id_ed25519.pub` and `known_hosts` to 0644.
+The home root is back to 0755 to satisfy SSH ownership/mode checks.
+The other shared tree permissions and umask remain unchanged.
+
+Also attempted the requested deletion of the two `dawnxchen`-owned entries.
+Removing `settings.local.json` failed because its parent directory is not writable
+by `leechuck`; removing `.claude` failed because it remains nonempty. Both still
+require their owner or an administrator to remove them.
