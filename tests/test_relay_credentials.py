@@ -72,6 +72,11 @@ def test_status_exact_id_signature_revocation_and_unknown(authority):
     assert relay.status(wrong, issuer['id'])['statement']['status'] == 'unknown'
     reg.revoke(doc['id'])
     assert relay.status(doc['credentialStatus']['id'], None)['statement']['status'] == 'revoked'
+    reg.init_issuer('child-board', 'Test child', 'QualificationIssuer')
+    accreditation = reg.accredit('test-board', 'child-board', ['QualificationIssuer'])
+    assert relay.status(accreditation['id'], None)['statement']['status'] == 'active'
+    reg.revoke(accreditation['id'])
+    assert relay.status(accreditation['id'], None)['statement']['status'] == 'revoked'
 
 
 def test_real_relay_holder_retrieval_and_receiver_release_gate(authority, tmp_path):
