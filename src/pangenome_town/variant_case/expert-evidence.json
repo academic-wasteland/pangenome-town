@@ -1,0 +1,36 @@
+{
+  "id": "f57714a2-598c-4e48-a07e-6858c037050e",
+  "version": "1.0.0",
+  "published": "2023-06-15",
+  "retrieved": "2026-09-17",
+  "source": "https://erepo.clinicalgenome.org/evrepo/ui/interpretation/f57714a2-598c-4e48-a07e-6858c037050e",
+  "source_json": "https://erepo.genome.network/evrepo/api/summary/classification/f57714a2-598c-4e48-a07e-6858c037050e/doc/sepio/version/1.0.0",
+  "source_sha256": "6f72d266be5a061ce4ff58221362ab5be524237baaa4a299e6c96354ac300290",
+  "variant": {
+    "assembly": "GRCh38",
+    "chrom": "15",
+    "pos": 48421680,
+    "ref": "T",
+    "alt": "C"
+  },
+  "gene": "FBN1",
+  "hgvs": "NM_000138.5:c.7577A>G",
+  "protein": "p.Asn2526Ser",
+  "condition": "Marfan syndrome",
+  "condition_id": "MONDO:0007947",
+  "expert_classification": "Likely pathogenic",
+  "specification": "ClinGen FBN1 VCEP version 1 (approved 2022-01-04)",
+  "specification_url": "https://www.clinicalgenome.org/site/assets/files/7445/clingen_fbn1_acmg_specifications_v1.pdf",
+  "revel": 0.821,
+  "population_absent": true,
+  "population_versions": [
+    "gnomAD v2.1.1",
+    "gnomAD v3.1.2"
+  ],
+  "ps4_points_min": 4,
+  "missense_constraint_z": 5.06,
+  "missense": true,
+  "benign_evidence": false,
+  "pm1_excluded": "The panel excludes PM1 for this asparagine-to-serine substitution.",
+  "pp2_supported_by_panel": true
+}

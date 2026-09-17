@@ -454,3 +454,8 @@ the previous run is reset on submission. Download results you want to keep
 before rerunning. The narrated walkthrough remains a separate optional control.
 The browser check also verifies two consecutive edited queries, distinct run IDs
 and no audio playback.
+
+The phenotype case now optionally continues through Yamatai's private synthetic
+VCF, local REVEL/frequency reranking, and Ubar/Themis's evidence-based ACMG report.
+The option is enabled by default; uncheck it to run only the original gene query.
+[Workflow, privacy boundary, evidence sources and deployment](private-variant-demo.md).

@@ -126,3 +126,30 @@ def test_proxy_mount_cookie_assets_and_https_origin(towns, tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_variant_pdf_is_scoped_to_visitor_and_reset(towns, tmp_path):
+    visitors = Visitors(towns, tmp_path)
+    server = ThreadingHTTPServer(('127.0.0.1', 0), handler(visitors))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    a, b = [urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())) for _ in range(2)]
+    try:
+        a.open(base + '/demo/phenotypes').close()
+        b.open(base + '/demo/phenotypes').close()
+        first = next(iter(visitors.sessions.values()))
+        stage = visitors.stage(first, 'demo-phenotypes')
+        stage.run = {'id': 'test', 'state': 'completed'}
+        stage.pdf = b'%PDF-fixture-private-to-first-visitor'
+        with a.open(base + '/api/demo-phenotypes/report.pdf') as response:
+            assert response.headers['Content-Type'] == 'application/pdf'
+            assert response.read() == stage.pdf
+        with pytest.raises(urllib.error.HTTPError) as error:
+            b.open(base + '/api/demo-phenotypes/report.pdf')
+        assert error.value.code == 400
+        stage.run = None
+        with pytest.raises(urllib.error.HTTPError):
+            a.open(base + '/api/demo-phenotypes/report.pdf')
+    finally:
+        server.shutdown(); server.server_close(); thread.join()

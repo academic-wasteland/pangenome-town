@@ -165,6 +165,9 @@ def handler(visitors):
                     session = self.visitor()
                     stage = visitors.stage(session, path.split('/')[2])
                     self.send(200, stage.trust_bundle() if path.endswith('/trust') else stage.snapshot())
+                elif path == '/api/demo-phenotypes/report.pdf':
+                    stage = visitors.stage(self.visitor(), 'demo-phenotypes')
+                    self.send(200, stage.report_bytes(), 'application/pdf')
                 elif path == '/healthz':
                     self.send(200, {'ok': True, 'mode': 'live-isolated-visitors'})
                 else:
@@ -191,7 +194,7 @@ def handler(visitors):
                         or self.headers.get_content_type() != 'application/json'):
                     return self.send(413, {'error': 'Expected JSON under 64 KiB.'})
                 payload = json.loads(self.rfile.read(length))
-                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf', 'phenotypes'}:
+                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf', 'phenotypes', 'private_case'}:
                     raise StageError('Only the fixed demo inputs are accepted.')
                 self.send(200, visitors.act(session, parts[1], parts[2], payload))
             except (StageError, ValueError) as error:

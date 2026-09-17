@@ -1,5 +1,8 @@
 """Exercise the public INDIGENA demo with real relay inference and narrated playback."""
 import argparse
+import base64
+import hashlib
+from pathlib import Path
 import json
 import os
 import subprocess
@@ -12,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default='https://leechuck.de/wasteland-live/demo/phenotypes')
     parser.add_argument('--screenshot')
+    parser.add_argument('--pdf')
     args = parser.parse_args()
     prefix = urlsplit(args.url).path.partition('/demo')[0]
     with tempfile.TemporaryDirectory(prefix='phenotype-browser-', ignore_cleanup_errors=True) as home:
@@ -52,6 +56,17 @@ def main():
             assert run['license'] == 'https://creativecommons.org/licenses/by/4.0/'
             assert run['benchmark']['gene'] == 'FBN1' and 1 <= run['benchmark']['rank'] <= 5
             assert len(run['result']['resolution']['terms']) == 3
+            assert run['variant_benchmark']['recovered'] is True
+            assert run['variants']['retained'][0]['gene'] == 'FBN1'
+            assert run['interpretation']['classification'] == 'Likely pathogenic'
+            assert {c['code'] for c in run['interpretation']['criteria'] if c['met']} == {'PS4', 'PM2_Supporting', 'PP2', 'PP3'}
+            disclosures = [e['detail']['body'] for e in run['events'] if e['title'] == 'variant-interpretation']
+            assert len(disclosures) == 1 and set(disclosures[0]) == {'resident', 'variant', 'phenotypes'}
+            encoded = browser('js', f'(async()=>{{const r=await fetch({json.dumps(prefix+"/api/demo-phenotypes/report.pdf")});if(!r.ok)throw Error("PDF unavailable");const b=new Uint8Array(await r.arrayBuffer());return btoa(Array.from(b,x=>String.fromCharCode(x)).join(""))}})()')
+            pdf = base64.b64decode(encoded)
+            assert pdf.startswith(b'%PDF-') and hashlib.sha256(pdf).hexdigest() == run['report_sha256']
+            if args.pdf:
+                Path(args.pdf).write_bytes(pdf)
             browser('assert', 'document.querySelectorAll("#rows tr.expected").length===1')
             assert browser('js', api('demo')) == 'null'
             assert browser('js', api('demo-cluster')) == 'null'
@@ -75,6 +90,7 @@ def main():
             assert manual['benchmark']['rank'] <= 5
             assert manual['result']['query']['phenotypes'] == ['HP:0001083', 'HP:0001166', 'HP:0002616']
             browser('assert', 'document.querySelector("audio").currentTime===0 && !document.querySelector("audio").getAttribute("src")')
+            browser('js', 'document.querySelector("#private-case").checked=false')
             browser('js', 'document.querySelector("#terms").value="arachnodactyly"')
             browser('click', '#run')
             wait('document.querySelector("#error").textContent.includes("Ambiguous phenotype") && !document.querySelector("#run").disabled')
@@ -86,6 +102,8 @@ def main():
             assert rerun['id'] != manual['id'] and rerun['result']['query']['phenotypes'] == ['MP:0006296']
             assert 'benchmark' not in rerun
             browser('assert', 'document.querySelector("audio").currentTime===0')
+            assert 'interpretation' not in rerun
+            print('PASS: private VCF filtering, FBN1 variant rank 1, allowlisted disclosure, ACMG evidence and PDF integrity.')
             print('PASS: manual phenotype edits, two distinct live runs without audio or reset.')
             print('PASS: live relay inference, FAIR model match, 20 gene candidates, narration/pause/resume, licensed download and independent reset.')
         finally:

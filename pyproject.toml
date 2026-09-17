@@ -12,6 +12,7 @@ license = "Apache-2.0"
 dependencies = [
   "cryptography>=43",
   "numpy>=1.26,<3",
+  "reportlab>=4,<5",
   "research-commons-conformance @ git+https://github.com/academic-wasteland/research-commons@receiver-assertions",
 ]
 

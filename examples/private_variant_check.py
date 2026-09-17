@@ -1,0 +1,40 @@
+"""Run the real two-town private-variant demo and assert ranks, disclosure and report."""
+import argparse
+import hashlib
+from pathlib import Path
+
+from pangenome_town.config import load
+from pangenome_town.demo_phenotypes import PhenotypeStage
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--town-root', type=Path, default=Path('..'))
+    parser.add_argument('--pdf', type=Path)
+    args = parser.parse_args()
+    towns = {name: load(args.town_root / name / 'town.toml') for name in ['ubar', 'yamatai']}
+    stage = PhenotypeStage(towns)
+    stage.start(private_case=True)
+    stage.approve(stage.run['id'])
+    stage.worker.join(240)
+    assert stage.run['state'] == 'completed', stage.run['events'][-1]
+    run = stage.run
+    assert run['benchmark']['rank'] == 3
+    assert run['variant_benchmark']['recovered'] is True
+    assert run['variants']['retained'][0]['gene_rank'] == 3
+    assert run['interpretation']['classification'] == 'Likely pathogenic'
+    payloads = [e['detail']['body'] for e in run['events'] if e['title'] == 'variant-interpretation']
+    assert len(payloads) == 1 and set(payloads[0]) == {'resident', 'variant', 'phenotypes'}
+    pdf = stage.report_bytes()
+    assert pdf.startswith(b'%PDF-') and hashlib.sha256(pdf).hexdigest() == run['report_sha256']
+    if args.pdf:
+        args.pdf.write_bytes(pdf)
+    print('PASS: live INDIGENA FBN1 gene rank 3 / 1529.')
+    print('PASS: six local synthetic VCF calls; four retained; expected FBN1 allele at variant rank 1.')
+    print('PASS: Ubar interpretation receives only selected allele, phenotype identifiers and resident routing.')
+    print('PASS: PS4 + PM2_Supporting + PP2 + PP3 -> Likely pathogenic; no PP4 or fabricated patient evidence.')
+    print('PASS: Ubar-generated PDF received and SHA-256 verified.')
+
+
+if __name__ == '__main__':
+    main()

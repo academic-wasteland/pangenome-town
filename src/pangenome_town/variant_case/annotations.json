@@ -1,0 +1,12 @@
+{
+  "assembly": "GRCh38",
+  "notice": "Synthetic patient and background variants. Background coordinates, gene annotations and scores are teaching fixtures, not observed genomic facts. Target REVEL and population absence come from a pinned ClinGen assessment; not fresh annotation calls.",
+  "variants": {
+    "1:47880001:A:G": {"gene":"FOXE3","af":0.00001,"revel":0.1,"provenance":"Synthetic teaching annotation"},
+    "1:150550001:C:T": {"gene":"ADAMTSL4","af":0.00001,"revel":0.65,"provenance":"Synthetic teaching annotation"},
+    "15:48421680:T:C": {"gene":"FBN1","af":0.0,"revel":0.821,"provenance":"ClinGen FBN1 VCEP 2023-06-15: REVEL 0.821; not observed in gnomAD v2.1.1/v3.1.2. AF=0 encodes reported absence, not a current frequency measurement."},
+    "15:48421690:A:G": {"gene":"FBN1","af":0.02,"revel":0.95,"provenance":"Synthetic teaching annotation"},
+    "15:48421700:C:T": {"gene":"FBN1","af":0.000001,"revel":0.99,"provenance":"Synthetic teaching annotation"},
+    "16:67190001:G:A": {"gene":"HSF4","af":0.00001,"revel":0.05,"provenance":"Synthetic teaching annotation"}
+  }
+}

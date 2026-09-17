@@ -29,11 +29,11 @@
   },
   {
     "id": "phenotype-analysis",
-    "text": "A new INDIGENA query is now running through the authenticated relay. The trained model compares phenotype profiles associated with mouse genes. We annotate the returned genes using a mouse to human orthology report from Mouse Genome Informatics. Human names do not turn a mouse score into a validated human prediction."
+    "text": "A new INDIGENA query is running. Ubar ranks mouse gene profiles and annotates human orthologues. With the private case enabled, Yamatai uses that gene list to screen its own synthetic V C F: quality, genotype, and population frequency first, then R E V E L and phenotype rank. The V C F never goes to Ubar. Only the selected allele and phenotype terms are sent to Themis for interpretation."
   },
   {
     "id": "phenotype-results",
-    "text": "These are the returned candidate genes. The ordering and scores come from the actual mouse model. Inspect the mapping, model checkpoint, and FAIR description, or download all returned rows and the run evidence. Similarity is a research lead, not a disease probability or a confirmed diagnosis."
+    "text": "Inspect the gene ranking and, for the private case, the local variant ranking. The expected F B N one allele is checked after scoring, not used to choose the result. Themis evaluates a pinned expert curation using A C M G criteria, with sources and missing evidence visible. Download the P D F variant report. This synthetic demonstration is not a patient diagnosis or a clinical sign off."
   }
 ]
 }
