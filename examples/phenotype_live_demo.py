@@ -62,6 +62,22 @@ def main():
             browser('click', '#reset')
             wait('document.querySelectorAll("#rows tr").length===0')
             assert browser('js', api('demo-phenotypes')) == 'null'
+            # Manual execution and a second edited query must work without narration or reset.
+            browser('open', args.url)
+            browser('wait', '#run')
+            browser('js', 'document.querySelector("#terms").value="HP:0001250, HP:0001249"')
+            browser('click', '#run')
+            wait('document.querySelectorAll("#rows tr").length===20 && !document.querySelector("#run").disabled')
+            manual = json.loads(browser('js', api('demo-phenotypes')))
+            assert manual['phenotypes'] == ['HP:0001249', 'HP:0001250']
+            browser('assert', 'document.querySelector("audio").currentTime===0 && !document.querySelector("audio").getAttribute("src")')
+            browser('js', 'document.querySelector("#terms").value="HP:0000252"')
+            browser('click', '#run')
+            wait('document.querySelectorAll("#rows tr").length===20 && !document.querySelector("#run").disabled')
+            rerun = json.loads(browser('js', api('demo-phenotypes')))
+            assert rerun['id'] != manual['id'] and rerun['phenotypes'] == ['HP:0000252']
+            browser('assert', 'document.querySelector("audio").currentTime===0')
+            print('PASS: manual phenotype edits, two distinct live runs without audio or reset.')
             print('PASS: live relay inference, FAIR model match, 20 gene candidates, narration/pause/resume, licensed download and independent reset.')
         finally:
             subprocess.run(['uvx', 'rodney', 'stop'], cwd=home, env=env, capture_output=True, timeout=20, check=False)

@@ -443,3 +443,11 @@ Browser verification (submits a real inference request):
 ```sh
 .venv/bin/python examples/phenotype_live_demo.py --screenshot /tmp/indigena-demo.png
 ```
+
+For manual INDIGENA use, edit the phenotype identifiers and click **Run my
+phenotype query**, the primary control. This executes a live query without
+starting narration. Once complete, edit and submit another query directly;
+the previous run is reset on submission. Download results you want to keep
+before rerunning. The narrated walkthrough remains a separate optional control.
+The browser check also verifies two consecutive edited queries, distinct run IDs
+and no audio playback.
