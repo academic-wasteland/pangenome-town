@@ -21,7 +21,7 @@
   "phenotypes": [
   {
     "id": "phenotype-question",
-    "text": "A fictional rare disease investigation begins with three observations: seizures, intellectual disability, and microcephaly. We will use these phenotype terms to find candidate genes. This is research prioritization, not a clinical diagnosis."
+    "text": "A fictional rare disease investigation begins with three observations: ectopia lentis, arachnodactyly, and aortic root aneurysm. These features occur in Marfan syndrome. The expected gene is F B N one. We resolve the labels in H P O and M P, then rank candidates without giving the model the expected gene. This is research prioritization, not a clinical diagnosis."
   },
   {
     "id": "phenotype-discovery",

@@ -50,7 +50,9 @@ def main():
             assert run['state'] == 'completed' and run['result']['candidate_count'] >= 20
             assert run['fair']['record']['version'] == 'sha256:' + run['result']['checkpoint_sha256']
             assert run['license'] == 'https://creativecommons.org/licenses/by/4.0/'
-            assert any(r['human_orthologue'] for r in run['result']['results'])
+            assert run['benchmark']['gene'] == 'FBN1' and 1 <= run['benchmark']['rank'] <= 5
+            assert len(run['result']['resolution']['terms']) == 3
+            browser('assert', 'document.querySelectorAll("#rows tr.expected").length===1')
             assert browser('js', api('demo')) == 'null'
             assert browser('js', api('demo-cluster')) == 'null'
             browser('js', '(()=>{window.saved=null;const original=URL.createObjectURL;URL.createObjectURL=b=>{b.text().then(t=>window.saved=t);return original(b)};return true})()')
@@ -58,6 +60,7 @@ def main():
             wait('window.saved!==null')
             browser('assert', 'window.saved.includes("CC BY 4.0") && window.saved.trim().split("\\n").length===23')
             if args.screenshot:
+                browser('js', 'window.scrollTo(0,0)')
                 browser('screenshot', '-w', '1440', '-h', '1100', args.screenshot)
             browser('click', '#reset')
             wait('document.querySelectorAll("#rows tr").length===0')
@@ -65,17 +68,23 @@ def main():
             # Manual execution and a second edited query must work without narration or reset.
             browser('open', args.url)
             browser('wait', '#run')
-            browser('js', 'document.querySelector("#terms").value="HP:0001250, HP:0001249"')
+            browser('js', 'document.querySelector("#terms").value="HPO: Ectopia lentis; HPO: Arachnodactyly; HPO: Aortic root aneurysm"')
             browser('click', '#run')
             wait('document.querySelectorAll("#rows tr").length===20 && !document.querySelector("#run").disabled')
             manual = json.loads(browser('js', api('demo-phenotypes')))
-            assert manual['phenotypes'] == ['HP:0001249', 'HP:0001250']
+            assert manual['benchmark']['rank'] <= 5
+            assert manual['result']['query']['phenotypes'] == ['HP:0001083', 'HP:0001166', 'HP:0002616']
             browser('assert', 'document.querySelector("audio").currentTime===0 && !document.querySelector("audio").getAttribute("src")')
-            browser('js', 'document.querySelector("#terms").value="HP:0000252"')
+            browser('js', 'document.querySelector("#terms").value="arachnodactyly"')
+            browser('click', '#run')
+            wait('document.querySelector("#error").textContent.includes("Ambiguous phenotype") && !document.querySelector("#run").disabled')
+            browser('assert', 'document.querySelectorAll("#rows tr").length===0')
+            browser('js', 'document.querySelector("#terms").value="MP: arachnodactyly"')
             browser('click', '#run')
             wait('document.querySelectorAll("#rows tr").length===20 && !document.querySelector("#run").disabled')
             rerun = json.loads(browser('js', api('demo-phenotypes')))
-            assert rerun['id'] != manual['id'] and rerun['phenotypes'] == ['HP:0000252']
+            assert rerun['id'] != manual['id'] and rerun['result']['query']['phenotypes'] == ['MP:0006296']
+            assert 'benchmark' not in rerun
             browser('assert', 'document.querySelector("audio").currentTime===0')
             print('PASS: manual phenotype edits, two distinct live runs without audio or reset.')
             print('PASS: live relay inference, FAIR model match, 20 gene candidates, narration/pause/resume, licensed download and independent reset.')

@@ -418,9 +418,12 @@ Browser verification, including new local and DDBJ analyses:
 ## Third case: phenotypes to candidate genes
 
 Open https://leechuck.de/wasteland-live/demo/phenotypes (no login). Choose **Play
-narrated demo** for a short automatic walkthrough, or edit the HPO identifiers
-and choose **Run analysis**. The fictional example uses seizure, intellectual
-disability and microcephaly. Narration waits for the real answer; Pause pauses
+narrated demo** for a short automatic walkthrough, or edit the phenotype labels
+and choose **Run my phenotype query**. Enter one label per line (semicolon separators
+also work). The selected Marfan example uses HPO ectopia lentis, arachnodactyly
+and aortic root aneurysm; FBN1 ranks third among 1,529 mouse profiles with the
+installed checkpoint. Its actual rank is displayed and its row highlighted.
+The expected gene is not sent to the scoring service. Narration waits for the real answer; Pause pauses
 presentation, Stop prevents further automatic steps, and Reset affects only
 this visitor's phenotype case. Already submitted inference continues.
 
@@ -444,7 +447,7 @@ Browser verification (submits a real inference request):
 .venv/bin/python examples/phenotype_live_demo.py --screenshot /tmp/indigena-demo.png
 ```
 
-For manual INDIGENA use, edit the phenotype identifiers and click **Run my
+For manual INDIGENA use, edit the phenotype labels and click **Run my
 phenotype query**, the primary control. This executes a live query without
 starting narration. Once complete, edit and submit another query directly;
 the previous run is reset on submission. Download results you want to keep

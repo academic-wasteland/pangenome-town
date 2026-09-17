@@ -16,7 +16,8 @@ from .phenotypes import validate
 RECORD = 'urn:wasteland:fair:ubar:indigena'
 CATALOGUE = 'https://leechuck.de/wasteland-fair/'
 REUSE = 'Demo metadata and generated result tables: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), credit Academic Wasteland. Upstream model and source-data rights are separate; no additional rights over them are granted.'
-DEFAULT_TERMS = ['HP:0001250', 'HP:0001249', 'HP:0000252']
+DEFAULT_TERMS = ['HPO: Ectopia lentis', 'HPO: Arachnodactyly', 'HPO: Aortic root aneurysm']
+EXAMPLE_IDS = {'HP:0001083', 'HP:0001166', 'HP:0002616'}
 
 
 class PhenotypeStage(DemoStage):
@@ -85,12 +86,15 @@ class PhenotypeStage(DemoStage):
             body = {'phenotypes': self.run['phenotypes'], 'limit': 20, 'method': 'indigena', 'include_human_orthologues': True}
             mid = client.ask('ubar', operation='phenotype-search', body=body)
             self._event('yamatai', 'ubar', 'Send the phenotype profile',
-                        'Yamatai sends a real authenticated relay request to Ubar. Only phenotype identifiers are sent; there are no patient names or genomes.',
+                        'Yamatai sends a real authenticated relay request to Ubar. Only phenotype labels or identifiers are sent; there are no patient names or genomes.',
                         detail={'request_id': mid, 'body': body})
             replies = client.wait(mid, timeout=120, acknowledge=False)
             reply = next((r for r in replies if r['from'] == 'ubar' and r['kind'] == 'answer' and r['in_reply_to'] == mid), None)
-            if reply is None or not reply['body'].get('ok'):
-                raise StageError('Ubar did not return a successful analysis.')
+            if reply is None:
+                raise StageError('Ubar did not answer within 120 seconds; retry the query.')
+            if not reply['body'].get('ok'):
+                client.call('/v1/ack', {'id': reply['id']})
+                raise StageError('Ubar: ' + str(reply['body'].get('error', 'analysis failed')))
             result = reply['body']
             if record.get('version') != 'sha256:' + str(result.get('checkpoint_sha256')):
                 raise StageError('The returned model differs from the FAIR description; results withheld until metadata is refreshed.')
@@ -99,6 +103,16 @@ class PhenotypeStage(DemoStage):
             client.call('/v1/ack', {'id': reply['id']})
             with self.lock:
                 self.run['result'] = result
+                if result.get('resolution'):
+                    self._event('ubar', 'yamatai', 'Resolve labels in HPO and MP',
+                                'Exact labels and synonyms resolve to ontology identifiers before INDIGENA inference.',
+                                detail=result['resolution'])
+                if set(result.get('query', {}).get('phenotypes', [])) == EXAMPLE_IDS:
+                    rank = next((i + 1 for i, row in enumerate(result['results'])
+                                 if (row.get('human_orthologue') or {}).get('symbol') == 'FBN1'), None)
+                    self.run['benchmark'] = {'gene': 'FBN1', 'rank': rank, 'disease': 'Marfan syndrome',
+                        'source': 'https://www.ncbi.nlm.nih.gov/books/NBK1335/',
+                        'note': 'Selected demonstration case, not an independent clinical evaluation. Expected gene is never sent to the scoring service.'}
                 self._event('ubar', 'yamatai', 'Rank mouse profiles; annotate human orthologues',
                             f"INDIGENA scored {result['candidate_count']} mouse gene profiles. The returned top {len(result['results'])} retain their mouse scores and are annotated using an MGI orthology report.",
                             detail={'request_id': mid, 'reply_id': reply['id'], 'checkpoint_sha256': result['checkpoint_sha256'], 'orthology': result['orthology']})
