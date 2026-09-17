@@ -39,7 +39,16 @@ def search(town, body):
         from .indigena import search as learned_search
         if not settings.get('model'):
             raise ValueError('a trained INDIGENA model is not installed yet')
-        return learned_search(settings, {k: v for k, v in query.items() if k != "measure"})
+        result = learned_search(settings, {k: v for k, v in query.items() if k != "measure"})
+        include = body.get('include_human_orthologues', False)
+        if not isinstance(include, bool):
+            raise ValueError('include_human_orthologues must be boolean')
+        if include:
+            from .orthologues import annotate
+            if not settings.get('orthologues'):
+                raise ValueError('human orthologue mapping is not installed')
+            result = annotate(result, settings['orthologues'])
+        return result
     root = Path(settings['data']).expanduser().resolve()
     groovy = settings.get('groovy', 'groovy')
     town.state_dir.mkdir(parents=True, exist_ok=True)

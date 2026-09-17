@@ -17,5 +17,23 @@
   ],
   "common": [
     {"id":"demo-failed","text":"The workflow stopped or a check failed. No successful result is being claimed. Inspect the recorded error on the page before resetting this demonstration."}
-  ]
+  ],
+  "phenotypes": [
+  {
+    "id": "phenotype-question",
+    "text": "A fictional rare disease investigation begins with three observations: seizures, intellectual disability, and microcephaly. We will use these phenotype terms to find candidate genes. This is research prioritization, not a clinical diagnosis."
+  },
+  {
+    "id": "phenotype-discovery",
+    "text": "The request goes from Yamatai to Ubar. First, FAIRhaven describes the service: what it accepts, what it returns, its model version, access requirements, and known gaps. Discovery does not grant permission. This public service accepts registered town requests."
+  },
+  {
+    "id": "phenotype-analysis",
+    "text": "A new INDIGENA query is now running through the authenticated relay. The trained model compares phenotype profiles associated with mouse genes. We annotate the returned genes using a mouse to human orthology report from Mouse Genome Informatics. Human names do not turn a mouse score into a validated human prediction."
+  },
+  {
+    "id": "phenotype-results",
+    "text": "These are the returned candidate genes. The ordering and scores come from the actual mouse model. Inspect the mapping, model checkpoint, and FAIR description, or download all returned rows and the run evidence. Similarity is a research lead, not a disease probability or a confirmed diagnosis."
+  }
+]
 }

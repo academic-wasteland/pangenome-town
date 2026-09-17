@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from . import config
 from .demo_cluster import ClusterStage
+from .demo_phenotypes import PhenotypeStage
 from .demo_stage import DemoStage, StageError
 
 ASSETS = Path(__file__).parent
@@ -35,7 +36,7 @@ class Visitors:
         self.semaphore = threading.BoundedSemaphore(slots)
         self.max_sessions = max_sessions
         self.max_pending = max_pending
-        self.factories = {'demo': stage_factory, 'demo-cluster': cluster_factory}
+        self.factories = {'demo': stage_factory, 'demo-cluster': cluster_factory, 'demo-phenotypes': PhenotypeStage}
         self.lock = threading.RLock()
         self.sessions = {}
 
@@ -137,12 +138,14 @@ def handler(visitors):
         def do_GET(self):
             path = self.route()
             try:
-                if path in ('/', '/demo', '/demo/visitor'):
+                if path in ('/', '/demo', '/demo/visitor', '/demo/phenotypes'):
                     session = self.visitor(create=True)
-                    filename = 'demo_cluster.html' if path == '/demo/visitor' else 'demo_stage.html'
+                    filename = 'demo_phenotypes.html' if path == '/demo/phenotypes' else 'demo_cluster.html' if path == '/demo/visitor' else 'demo_stage.html'
                     page = (ASSETS / filename).read_text().replace('__COCKPIT_TOKEN__', session['token'])
                     page = page.replace('Open cockpit', 'Your live demo')
-                    page = page.replace('<main>', '<main><p style="padding:10px 16px;background:#20382e;color:#d5f0df;border-radius:8px">Live visitor session · New analyses run on this laptop or DDBJ. Other visitors have separate runs. Approvals use isolated demo authorities. Use synthetic or public data only.</p>', 1)
+                    if path != '/demo/phenotypes':
+                        page = page.replace('</nav>', ' &nbsp; / &nbsp; <a href="/demo/phenotypes">03 · Phenotypes to genes</a></nav>', 1)
+                    page = page.replace('<main>', '<main><p style="padding:10px 16px;background:#20382e;color:#d5f0df;border-radius:8px">Live visitor session · New analyses run on this laptop or DDBJ. Other visitors have separate runs. Where required, approvals use isolated demo authorities. Use synthetic or public data only.</p>', 1)
                     self.send(200, self.mounted(page).encode(), 'text/html; charset=utf-8', cookie=session['id'])
                 elif path in ('/demo-assets/inspection.js', '/demo-assets/autorun.js', '/demo-assets/nacl-fast.min.js'):
                     asset = {'/demo-assets/inspection.js': 'demo_inspection.js',
@@ -158,7 +161,7 @@ def handler(visitors):
                         return self.send(404, {'error': 'Not found'})
                     self.send(200, (ASSETS / 'demo_audio' / filename).read_bytes(),
                               'application/json' if filename.endswith('.json') else 'audio/mpeg')
-                elif path in ('/api/demo', '/api/demo-cluster', '/api/demo/trust', '/api/demo-cluster/trust'):
+                elif path in ('/api/demo', '/api/demo-cluster', '/api/demo/trust', '/api/demo-cluster/trust', '/api/demo-phenotypes', '/api/demo-phenotypes/trust'):
                     session = self.visitor()
                     stage = visitors.stage(session, path.split('/')[2])
                     self.send(200, stage.trust_bundle() if path.endswith('/trust') else stage.snapshot())
@@ -188,7 +191,7 @@ def handler(visitors):
                         or self.headers.get_content_type() != 'application/json'):
                     return self.send(413, {'error': 'Expected JSON under 64 KiB.'})
                 payload = json.loads(self.rfile.read(length))
-                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf'}:
+                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf', 'phenotypes'}:
                     raise StageError('Only the fixed demo inputs are accepted.')
                 self.send(200, visitors.act(session, parts[1], parts[2], payload))
             except (StageError, ValueError) as error:

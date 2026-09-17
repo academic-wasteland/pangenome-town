@@ -16,12 +16,13 @@ from piper import PiperVoice
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('model', type=Path)
+    parser.add_argument('--group', help='rebuild only one narration group')
     args = parser.parse_args()
     folder = Path(__file__).resolve().parents[1] / 'src/pangenome_town/demo_audio'
     voice = PiperVoice.load(str(args.model))
     notes = json.loads((folder / 'playbook.json').read_text())
     with tempfile.TemporaryDirectory() as tmp:
-        for group in notes.values():
+        for group in ([notes[args.group]] if args.group else notes.values()):
             for note in group:
                 wav = Path(tmp) / 'speech.wav'
                 with wave.open(str(wav), 'wb') as output:

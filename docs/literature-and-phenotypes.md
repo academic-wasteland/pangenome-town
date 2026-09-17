@@ -173,3 +173,33 @@ promote a later validation-selected checkpoint after completion gates pass.
 The unread-mail audit found one answered Bloodninja wrapper still unread and corrected
 it. No unhandled agent inbox messages remained in that audit. Seven human inbox
 messages were retained: four agent replies and three Dolt backup-health advisories.
+
+### Human orthologue annotations and the FAIR demo
+
+`phenotype-search` with `method: "indigena"` accepts optional
+`include_human_orthologues: true`. It preserves the original mouse gene order
+and scores, annotating rows with human symbols, HGNC IDs and NCBI gene IDs.
+Unmapped or conflicting mappings remain unannotated rather than dropping rows.
+The response includes the mapping source URL, retrieval date and SHA-256.
+
+Download MGI's `HOM_ProteinCoding.rpt` from
+https://www.informatics.jax.org/downloads/reports/HOM_ProteinCoding.rpt and prepare
+an operator-installed mapping:
+
+```sh
+python examples/prepare_orthologues.py HOM_ProteinCoding.rpt orthologues.json
+```
+
+Set `orthologues = "/absolute/path/to/orthologues.json"` under
+`[phenotype_search]` in the provider town configuration and restart its bridge.
+The preparation tool rejects unexpected columns and excludes conflicting human
+mappings; duplicate mouse NCBI aliases with identical human mappings collapse.
+These are orthologue annotations of a mouse-trained ranking, not human-model
+validation or clinical evidence.
+
+Public narrated demo: https://leechuck.de/wasteland-live/demo/phenotypes.
+Service description: `urn:wasteland:fair:ubar:indigena` in
+https://leechuck.de/wasteland-fair/. The demo pins its FAIR description and checks
+the actual model hash on every run. CC BY 4.0 covers project-authored demo
+metadata and generated result tables, credit Academic Wasteland; it does not
+relicense upstream inputs, software or model weights.

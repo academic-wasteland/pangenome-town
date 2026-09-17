@@ -414,3 +414,32 @@ Browser verification, including new local and DDBJ analyses:
 .venv/bin/python examples/public_live_demo.py \
   --url https://leechuck.de/wasteland-live/demo
 ```
+
+## Third case: phenotypes to candidate genes
+
+Open https://leechuck.de/wasteland-live/demo/phenotypes (no login). Choose **Play
+narrated demo** for a short automatic walkthrough, or edit the HPO identifiers
+and choose **Run analysis**. The fictional example uses seizure, intellectual
+disability and microcephaly. Narration waits for the real answer; Pause pauses
+presentation, Stop prevents further automatic steps, and Reset affects only
+this visitor's phenotype case. Already submitted inference continues.
+
+FAIRhaven supplies the published service description. Yamatai sends an actual
+registered-town request to Ubar's `phenotype-search` service. INDIGENA scores
+1,529 mouse gene profiles using the locally trained checkpoint; the top 20 are
+annotated with human orthologues from MGI. The model hash must match the FAIR
+record before results are displayed. These are research candidates, not a
+validated human diagnostic ranking; scores are not disease probabilities.
+
+Expand events and provenance to inspect requests, model and mapping digests,
+access requirements and the FAIR description. Download all 20 returned rows
+or the complete run evidence. The project-authored metadata and generated
+result tables are **CC BY 4.0**, credit **Academic Wasteland**. Upstream model,
+ontology and mapping data retain their own terms and are not relicensed.
+No clinical or IRB certification is invented for this public phenotype query.
+
+Browser verification (submits a real inference request):
+
+```sh
+.venv/bin/python examples/phenotype_live_demo.py --screenshot /tmp/indigena-demo.png
+```

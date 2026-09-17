@@ -180,7 +180,7 @@ def test_inspection_and_audio_routes(stage, towns):
             assert len(json.load(response)['receivers']) == 2
         with urllib.request.urlopen(base + '/demo-audio/playbook.json') as response:
             manifest = json.load(response)
-        assert set(manifest) == {'cohorts', 'visitor', 'common'}
+        assert set(manifest) == {'cohorts', 'visitor', 'common', 'phenotypes'}
         folder = Path(demo_stage.__file__).with_name('demo_audio')
         for group in manifest.values():
             for note in group:
