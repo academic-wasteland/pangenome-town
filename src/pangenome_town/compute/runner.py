@@ -98,7 +98,27 @@ class SemanticGate:
                 "Semantic gating cannot evaluate without a trusted contract manifest"
             )
 
-        if target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
+        # Bind rcp_task contract declarations against trusted manifest
+        task_contract = rcp_task.get("semanticContract")
+        if task_contract and task_contract != target_manifest.id:
+            raise SemanticPolicyError(
+                f"Semantic gating rejected task: semanticContract '{task_contract}' does not match trusted manifest id '{target_manifest.id}'"
+            )
+        task_profile = rcp_task.get("ontologyProfile")
+        if task_profile and task_profile != target_manifest.bundle_digest:
+            raise SemanticPolicyError(
+                f"Semantic gating rejected task: ontologyProfile '{task_profile}' does not match trusted manifest bundleDigest '{target_manifest.bundle_digest}'"
+            )
+
+        if callable(target_reasoner) and not hasattr(target_reasoner, "validate") and not hasattr(target_reasoner, "evaluate_gate") and not hasattr(target_reasoner, "classify"):
+            result = target_reasoner(rcp_task)
+            if isinstance(result, str):
+                status = result
+            elif isinstance(result, dict) and "status" in result:
+                status = result["status"]
+            else:
+                status = str(result)
+        elif target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
             result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
             if isinstance(result, str):
                 status = result
@@ -113,10 +133,21 @@ class SemanticGate:
             report = SemanticValidator(target_manifest, target_reasoner).validate(rcp_task)
             status = report.get("status", "unknown")
         else:
-            active_reasoner = target_reasoner or KMRunner()
-            validator = SemanticValidator(target_manifest, active_reasoner)
-            report = validator.validate(rcp_task)
-            status = report.get("status", "unknown")
+            try:
+                from ..rcp.pipeline import km_executable
+
+                km_exec = km_executable()
+                timeout = target_manifest.timeout_seconds if hasattr(target_manifest, "timeout_seconds") else 60
+                active_reasoner = target_reasoner or (KMRunner(executable=km_exec, timeout_seconds=timeout) if km_exec else None)
+                if active_reasoner is None:
+                    raise SemanticPolicyError("Semantic gating failed: no reasoner available (km not installed)")
+                validator = SemanticValidator(target_manifest, active_reasoner)
+                report = validator.validate(rcp_task)
+                status = report.get("status", "unknown")
+            except SemanticPolicyError:
+                raise
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating execution error: {exc}") from exc
 
         if status != "entailed":
             raise SemanticPolicyError(

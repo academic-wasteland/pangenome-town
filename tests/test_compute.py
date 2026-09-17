@@ -981,6 +981,21 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
             await no_manifest_runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert len(tasks_db) == initial_tasks_count
 
+        # 1e. Negative test: Task declaring wrong contract manifest id or bundle digest fails closed
+        import hashlib
+
+        from pangenome_town.exchange import canonical
+
+        contract_mismatch_task = dict(rcp_task, semanticContract="https://w3id.org/attacker/fake-contract")
+        tampered_bytes = canonical(contract_mismatch_task)
+        if isinstance(tampered_bytes, str):
+            tampered_bytes = tampered_bytes.encode("utf-8")
+        tampered_digest = f"sha256:{hashlib.sha256(tampered_bytes).hexdigest()}"
+        mismatched_payload = dict(tes_payload, tags=dict(tes_payload.get("tags", {}), rcp_digest=tampered_digest))
+        with pytest.raises(SemanticPolicyError, match="does not match trusted manifest id"):
+            await runner.dispatch(mismatched_payload, rcp_task=contract_mismatch_task)
+        assert len(tasks_db) == initial_tasks_count
+
         # 2. Positive test: Exact-task pass gate, dispatch to real local HTTP TES endpoint
         task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert task_id in tasks_db

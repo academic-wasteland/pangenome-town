@@ -23,6 +23,15 @@ from .sites import driver_for, load_sites
 from .workflows import SAMPLE_RE, TEMPLATES
 
 COHORT_WORKFLOWS = {'allele-frequency', 'genotype-export'}
+WORKFLOW_TASK_CLASSES = {
+    'allele-frequency': 'AlleleFrequencyTask',
+    'genotype-export': 'IndividualGenotypeExportTask',
+    'region-extract': 'RegionExtractionTask',
+    'region-variants': 'RegionVariantListingTask',
+    'graph-summary': 'GraphSummaryTask',
+    'haplotype-presence': 'HaplotypePresenceTask',
+    'gene-lookup': 'GeneLookupTask',
+}
 
 __all__ = [
     "COHORT_WORKFLOWS",
@@ -186,7 +195,23 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
         for data in datasets:
             selected = dataclasses.replace(site, datasets=('vcf',), paths={'vcf': data['locations'][site.storage]['vcf']})
             out = town.state_dir / 'executions' / uuid.uuid4().hex
-            actual_driver = driver or driver_for(selected)
+            if selected.driver == "tes":
+                # ADR 0001: TES dispatch requires a trusted semantic contract gate and source RCP task
+                from ..rcp import contract, pipeline
+                manifest_path = town.city_root / "contract" / f"{town.name}.contract.json"
+                if not manifest_path.exists():
+                    raise SemanticPolicyError(f"TES execution requires town contract manifest at {manifest_path}")
+                manifest = contract.ContractManifest.load(manifest_path)
+                gate = SemanticGate(manifest=manifest)
+                task_doc = pipeline.task_document(
+                    town,
+                    f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
+                    requester=task["requester"],
+                    request_id=task["id"],
+                )
+                actual_driver = driver or driver_for(selected, gate=gate, rcp_task=task_doc)
+            else:
+                actual_driver = driver or driver_for(selected)
             if hasattr(actual_driver, 'on_progress'):
                 actual_driver.on_progress = lambda dataset=data['id'], **detail: event('scheduler', dataset=dataset, **detail)
             result = run_task(town, template_name=task['workflow'], region=region, out_dir=out,

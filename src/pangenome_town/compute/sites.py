@@ -66,6 +66,7 @@ class Site:
         return {
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
             "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition, "storage": self.storage,
+            "output_url_prefix": self.output_url_prefix,
             "token": "***" if self.token else None,
             "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
@@ -121,15 +122,21 @@ def load_sites(town: TownConfig) -> list[Site]:
             raise ComputeError(f"site {name}: host must be a string")
         if host is not None and driver != "tes" and not HOST_RE.match(host):
             raise ComputeError(f"site {name}: host {host!r} is not a plain SSH alias or hostname")
-        if driver == "tes" and host is not None:
+        if driver == "tes":
+            if not host:
+                raise ComputeError(f"site {name}: TES driver needs a host URL")
             if not host.startswith(("http://", "https://")):
                 raise ComputeError(f"site {name}: TES driver host must start with http:// or https://")
-            # Enforce HTTPS unless loopback/local test endpoint
             from urllib.parse import urlparse
             parsed_host = urlparse(host).hostname or ""
-            is_loopback = parsed_host in {"localhost", "127.0.0.1", "::1"} or parsed_host.endswith(".local")
-            if not is_loopback and not host.startswith("https://") and not entry.get("allow_insecure_http", False):
+            is_loopback = parsed_host in {"localhost", "127.0.0.1", "::1"}
+            allow_insecure = entry.get("allow_insecure_http")
+            if allow_insecure is not None and not isinstance(allow_insecure, bool):
+                raise ComputeError(f"site {name}: allow_insecure_http must be true or false")
+            if not is_loopback and not host.startswith("https://") and allow_insecure is not True:
                 raise ComputeError(f"site {name}: remote TES endpoints require HTTPS unless allow_insecure_http is true")
+            if not workdir:
+                workdir = "/tmp/tes-work"
         submit_host = entry.get("submit_host")
         if submit_host is not None and (not isinstance(submit_host, str) or not HOST_RE.match(submit_host)):
             raise ComputeError(f"site {name}: submit_host {submit_host!r} is not a plain SSH alias or hostname")
@@ -157,6 +164,12 @@ def load_sites(town: TownConfig) -> list[Site]:
             for key, value in paths.items():
                 if not value.startswith("/") or ".." in value:
                     raise ComputeError(f"site {name}: path for {key} must be absolute on the remote host")
+        elif driver == "tes":
+            # Preserve raw URLs in paths for TES dataset mapping without resolving to local filesystem
+            remote_paths = {str(k): str(v) for k, v in (entry.get("paths") or {}).items()}
+            paths = remote_paths
+            if workdir is not None:
+                workdir = str(workdir)
         else:
             defaults = _default_paths(town)
             for key in datasets:
@@ -483,12 +496,12 @@ class TESDriver:
         import shutil
         import uuid
 
-        from .runner import SemanticGate, TESComputeRunner
+        from .runner import TESComputeRunner
         from .tes_schema import build_tes_task
 
         gate = self.options.get("gate")
         if gate is None:
-            gate = SemanticGate(reasoner=lambda task: {"status": "entailed"})
+            raise ComputeError(f"site {self.site.name}: TES driver requires a verified manifest-backed SemanticGate")
 
         rcp_task = self.options.get("rcp_task")
         WORKFLOW_TASK_MAP = {
@@ -499,6 +512,7 @@ class TESDriver:
             "graph-summary": "GraphSummaryTask",
             "haplotype-presence": "HaplotypePresenceTask",
             "gene-lookup": "GeneLookupTask",
+            "deconstruct-region": "WholeGraphDeconstructTask",
         }
         task_name = WORKFLOW_TASK_MAP.get(job.workflow, f"{job.workflow.capitalize()}Task")
         if rcp_task is None:
@@ -525,35 +539,49 @@ class TESDriver:
         output_prefix = (
             self.site.output_url_prefix
             or self.options.get("output_url_prefix")
-            or f"file://{fetch_to.resolve()}"
         )
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "s3://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote output storage URL (output_url_prefix)")
 
         image = self.options.get("image", "quay.io/vgteam/vg:v1.64.1")
 
-        # Map steps with stdout handling
+        # Map steps with stdout handling and translate paths to container mount paths
+        container_work_dir = "/container/work"
         commands = []
         for step in job.steps:
-            cmd = " ".join(shlex.quote(arg) for arg in step.argv)
+            remapped_argv = []
+            for arg in step.argv:
+                if job.work_dir and arg.startswith(job.work_dir):
+                    remapped_argv.append(arg.replace(job.work_dir, container_work_dir, 1))
+                else:
+                    remapped_argv.append(arg)
+            cmd = " ".join(shlex.quote(arg) for arg in remapped_argv)
             if step.stdout:
-                cmd += f" > {shlex.quote(step.stdout)}"
+                stdout_path = step.stdout
+                if job.work_dir and stdout_path.startswith(job.work_dir):
+                    stdout_path = stdout_path.replace(job.work_dir, container_work_dir, 1)
+                cmd += f" > {shlex.quote(stdout_path)}"
             commands.append(cmd)
         combined_command = ["sh", "-c", " && ".join(commands)]
 
         # Map inputs from job and datasets
         dataset_storage_map = {}
         for k, v in self.site.paths.items():
-            if v.startswith(("http://", "https://", "s3://", "file://")):
-                dataset_storage_map[k] = v
+            dataset_storage_map[k] = v
         if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
             for ds in rcp_task["usesDataset"]:
-                if isinstance(ds, dict) and ds.get("@id") and ds.get("url"):
-                    dataset_storage_map[ds["@id"]] = ds["url"]
+                if isinstance(ds, dict) and ds.get("@id"):
+                    ds_id = ds["@id"]
+                    if ds.get("url"):
+                        dataset_storage_map[ds_id] = ds["url"]
+                    elif ds_id in self.site.paths:
+                        dataset_storage_map[ds_id] = self.site.paths[ds_id]
 
         # Populate TES outputs from job.outputs
         tes_outputs = []
         for out in _fetched_outputs(job):
             out_name = out["name"]
-            out_path = out.get("path") or f"/container/output/{out_name}"
+            out_path = f"/container/output/{out_name}"
             out_url = f"{output_prefix.rstrip('/')}/{out_name}"
             tes_outputs.append({
                 "name": out_name,
@@ -568,12 +596,16 @@ class TESDriver:
             output_url_prefix=output_prefix,
             dataset_storage_map=dataset_storage_map,
             outputs=tes_outputs,
+            resources=job.resources,
         )
+
+        poll_interval = 1.0
+        wall_time = job.resources.get("wall_time", self.site.max_wall_seconds)
+        max_attempts = max(10, int(wall_time / poll_interval))
 
         async def _run() -> str:
             task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
-            # Poll with timeout to prevent hanging forever
-            max_attempts = 300
+            # Poll with timeout derived from wall time
             attempts = 0
             while attempts < max_attempts:
                 attempts += 1
@@ -582,13 +614,16 @@ class TESDriver:
                     if status != "COMPLETE":
                         raise ComputeError(f"TES execution failed with state: {status}")
                     break
-                await asyncio.sleep(1)
+                await asyncio.sleep(poll_interval)
             else:
                 raise ComputeError(f"TES execution timed out polling task {task_id}")
             return task_id
 
         started_time = time.monotonic()
-        task_id = asyncio.run(_run())
+        try:
+            task_id = asyncio.run(_run())
+        finally:
+            asyncio.run(runner.aclose())
         elapsed_seconds = round(time.monotonic() - started_time, 3)
 
         # Ensure declared outputs exist in fetch_to
@@ -609,6 +644,19 @@ class TESDriver:
                             shutil.copy2(local_src, target)
                         else:
                             raise ComputeError(f"TES output {output['name']} was not produced at {local_src}")
+                    elif out_url.startswith(("http://", "https://")):
+                        try:
+                            import httpx
+
+                            headers = {}
+                            if self.site.token:
+                                headers["Authorization"] = f"Bearer {self.site.token}"
+                            with httpx.Client(timeout=30.0) as client:
+                                resp = client.get(out_url, headers=headers)
+                                resp.raise_for_status()
+                                target.write_bytes(resp.content)
+                        except Exception as dl_err:
+                            raise ComputeError(f"Failed to download TES output from {out_url}: {dl_err}") from dl_err
                     else:
                         raise ComputeError(f"TES output {output['name']} was not produced or fetched into {target}")
             outputs[output["name"]] = target

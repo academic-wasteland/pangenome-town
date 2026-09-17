@@ -453,9 +453,17 @@ class Node:
         keys = contract.dataset_keys(self.town)
         served_restricted = {item["iri"] for item in contract.restricted_datasets(self.town)}
         extra = tuple(sorted({keys[iri] for iri in _dataset_iris(document) if iri in served_restricted}))
+        driver = self.compute_driver
+        if driver is None:
+            # Wire ADR 0001 semantic gate & task context into TES drivers if chosen
+            site, _ = compute_runner.pick_site(self.town, template, extra)
+            if site and site.driver == "tes":
+                manifest_path = self.town.city_root / "contract" / f"{self.town.name}.contract.json"
+                manifest = contract.ContractManifest.load(manifest_path) if manifest_path.exists() else None
+                driver = compute_runner.driver_for(site, gate=compute_runner.SemanticGate(manifest=manifest, reasoner=self.validator), rcp_task=document)
         try:
             result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec,
-                                             driver=self.compute_driver, extra_datasets=extra,
+                                             driver=driver, extra_datasets=extra,
                                              on_start=lambda site: self._execution_started(record, template, "compute", site))
         except ComputeError as error:
             text = str(error)

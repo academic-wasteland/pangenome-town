@@ -130,14 +130,20 @@ def build_tes_task(
     dataset_storage_map: dict[str, str] | None = None,
     inputs: list[dict[str, Any]] | None = None,
     outputs: list[dict[str, Any]] | None = None,
+    resources: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
 
-    Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
+    Extracts inputs, outputs, executor specification, resources, and preserves rcp_id and rcp_digest in tags.
     """
     extracted_inputs = _extract_inputs(rcp_task, dataset_storage_map=dataset_storage_map)
     if inputs:
-        extracted_inputs.extend(inputs)
+        existing_urls = {item.get("url") for item in extracted_inputs}
+        for item in inputs:
+            url = item.get("url")
+            if url not in existing_urls:
+                extracted_inputs.append(item)
+                existing_urls.add(url)
     extracted_outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
     if outputs:
         extracted_outputs.extend(outputs)
@@ -176,5 +182,14 @@ def build_tes_task(
         "executors": executors,
         "tags": tags,
     }
+
+    if resources:
+        tes_res: dict[str, Any] = {}
+        if "cpus" in resources:
+            tes_res["cpu_cores"] = int(resources["cpus"])
+        if "mem_gb" in resources:
+            tes_res["ram_gb"] = float(resources["mem_gb"])
+        if tes_res:
+            task_payload["resources"] = tes_res
 
     return task_payload
