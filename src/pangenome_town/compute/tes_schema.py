@@ -162,6 +162,9 @@ def build_tes_task(
         existing_paths = {item.get("path") for item in extracted_outputs}
         for item in outputs:
             path = item.get("path")
+            url = item.get("url")
+            if not path or not url:
+                raise ValueError("TES output declarations must include both 'path' and 'url'")
             existing = next((entry for entry in extracted_outputs if entry.get("path") == path), None)
             if existing is not None:
                 existing.update(item)

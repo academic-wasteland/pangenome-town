@@ -181,9 +181,9 @@ class GraphTools:
                 "A service-reachable graph_url (e.g. s3:// or https://) is required for distributed TES tasks"
             )
 
-        if not output_url_prefix:
+        if not output_url_prefix or not output_url_prefix.startswith(("http://", "https://", "file://")):
             raise ValueError(
-                "An output_url_prefix (e.g. s3:// or https://) is required for remote TES outputs"
+                "An output_url_prefix (http://, https://, or file://) is required for remote TES outputs; object-store protocols like s3:// must be accessed via HTTP(S) gateways"
             )
 
         path_name = self.town.reference_path(region.assembly, region.chrom)

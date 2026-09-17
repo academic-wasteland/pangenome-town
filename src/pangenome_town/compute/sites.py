@@ -50,15 +50,15 @@ class Site:
     submit_host: str | None = None
     partition: str | None = None
     storage: str | None = None
-    output_url_prefix: str | None = None
-    allow_insecure_http: bool = False
     datasets: tuple[str, ...] = ()
     paths: dict[str, str] = field(default_factory=dict)
-    token: str | None = None
     tools: tuple[str, ...] = ("vg", "bcftools")
     max_cpus: int = 4
     max_mem_gb: int = 16
     max_wall_seconds: int = 1800
+    token: str | None = None
+    output_url_prefix: str | None = None
+    allow_insecure_http: bool = False
 
     def iri(self, town_name: str) -> str:
         return f"https://w3id.org/academic-wasteland/{town_name}/sites/{self.name}"
@@ -195,12 +195,13 @@ def load_sites(town: TownConfig) -> list[Site]:
         sites.append(Site(
             name=name, driver=driver, enabled=enabled, host=host, workdir=workdir, scheduler=scheduler,
             submit_host=submit_host, partition=partition, storage=entry.get("storage"),
-            output_url_prefix=output_url_prefix,
-            allow_insecure_http=bool(allow_insecure),
-            datasets=datasets, paths=paths, token=token, tools=tools,
+            datasets=datasets, paths=paths, tools=tools,
             max_cpus=_positive_int(entry, "max_cpus", 4, name),
             max_mem_gb=_positive_int(entry, "max_mem_gb", 16, name),
             max_wall_seconds=_positive_int(entry, "max_wall_seconds", 1800, name),
+            token=token,
+            output_url_prefix=output_url_prefix,
+            allow_insecure_http=bool(allow_insecure),
         ))
     return sites
 
@@ -572,6 +573,18 @@ class TESDriver:
                         candidate_key = "vcf" if any(str(value).endswith(("RestrictedDataset", "IndividualGenotypeData")) for value in types) else "graph"
                         if candidate_key in self.site.paths:
                             dataset_storage_map[ds_id] = self.site.paths[candidate_key]
+                elif isinstance(ds, str) and ds:
+                    ds_id = ds
+                    if ds_id in self.site.paths:
+                        dataset_storage_map[ds_id] = self.site.paths[ds_id]
+                    elif ds.startswith(("http://", "https://", "s3://", "file://", "/")):
+                        clean_url = ds.split("?")[0].split("#")[0]
+                        dataset_storage_map[ds_id] = ds
+                        path_replacements[ds] = f"{container_input_dir}/{Path(clean_url).name}"
+                    else:
+                        candidate_key = "vcf" if any(k in ds.lower() for k in ("vcf", "restricted", "individual")) else "graph"
+                        if candidate_key in self.site.paths:
+                            dataset_storage_map[ds_id] = self.site.paths[candidate_key]
 
         # Map steps with stdout handling and translate paths to container mount paths
         commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
@@ -690,8 +703,6 @@ class TESDriver:
                         local_src = Path(out_url.removeprefix("file://"))
                         if local_src.exists():
                             shutil.copy2(local_src, target)
-                        elif src_path.exists():
-                            shutil.copy2(src_path, target)
                         else:
                             raise ComputeError(f"TES output {output['name']} was not produced at {local_src}")
                     elif out_url.startswith(("http://", "https://")):

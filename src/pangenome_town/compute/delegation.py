@@ -285,7 +285,7 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
             db.rollback()
             # Only clean up un-dispatched / un-submitted claims so retry isn't permanently locked out,
             # but preserve the row if execution already dispatched to avoid duplicate tasks.
-            if "dispatched_task" not in locals():
+            if not locals().get("dispatched_task", False):
                 db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
                 db.commit()
         except sqlite3.Error:

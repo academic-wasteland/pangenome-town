@@ -789,8 +789,8 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
     tes_payload, rcp_task = tools.build_tes_chunk_task(
         region,
         manifest=manifest,
-        graph_url="s3://example-bucket/toy.gbz",
-        output_url_prefix="s3://example-bucket/outputs",
+        graph_url="https://example-bucket.org/toy.gbz",
+        output_url_prefix="https://example-bucket.org/outputs",
     )
 
     # 3. Assert build_tes_task generated executors with vg image and command
@@ -830,7 +830,7 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
 
 @pytest.mark.asyncio
 async def test_live_tes_opt_in_dispatch(monkeypatch):
-    """Opt-in live GA4GH TES v1.1 status probe test using environment variables.
+    """Opt-in live GA4GH TES v1.1 status probe and dispatch test using environment variables.
 
     Set AW_LIVE_TES_ENDPOINT and AW_LIVE_TES_TOKEN to execute against a real remote service.
     """
@@ -839,7 +839,7 @@ async def test_live_tes_opt_in_dispatch(monkeypatch):
     endpoint = os.environ.get("AW_LIVE_TES_ENDPOINT")
     token = os.environ.get("AW_LIVE_TES_TOKEN", "")
     if not endpoint:
-        pytest.skip("AW_LIVE_TES_ENDPOINT not set; skipping live TES service probe test")
+        pytest.skip("AW_LIVE_TES_ENDPOINT not set; skipping live TES service test")
 
     from pangenome_town.compute.runner import TESComputeRunner
 
@@ -895,6 +895,14 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
                 payload = json.loads(body.decode("utf-8"))
 
                 task_id = f"task-{len(tasks_db) + 1}"
+                # If outputs are declared, materialize them locally for file:// endpoints to simulate executor producing outputs
+                for out in payload.get("outputs", []):
+                    out_url = out.get("url", "")
+                    if out_url.startswith("file://"):
+                        out_file = Path(out_url.removeprefix("file://"))
+                        out_file.parent.mkdir(parents=True, exist_ok=True)
+                        out_file.write_bytes(b"dummy tes output bytes")
+
                 tasks_db[task_id] = {
                     "id": task_id,
                     "state": "QUEUED",
@@ -967,8 +975,8 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         tes_payload, rcp_task = tools.build_tes_chunk_task(
             region,
             manifest=manifest,
-            graph_url="s3://example-bucket/toy.gbz",
-            output_url_prefix="s3://example-bucket/outputs",
+            graph_url="https://example-bucket.org/toy.gbz",
+            output_url_prefix="https://example-bucket.org/outputs",
         )
 
         # 1. Negative test: Modified rcp_task causes digest mismatch, gate blocks submission before network call
@@ -1052,15 +1060,12 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         from pangenome_town.compute.sites import Site, TESDriver
         from pangenome_town.compute.workflows import RenderedJob, Step
 
-        dummy_out_file = tmp_path / "out_chunk.vg"
-        dummy_out_file.write_bytes(b"dummy graph bytes")
-
         tes_site = Site(
             name="tes_site",
             driver="tes",
             host=endpoint,
-            token=auth_token,
             workdir="/tmp/tes-work",
+            token=auth_token,
             output_url_prefix=f"file://{tmp_path.resolve()}",
             paths={"graph": "https://example.org/toy.gbz"},
         )
@@ -1078,7 +1083,7 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
                 Step(id="step-1", argv=["vg", "chunk", "-x", "https://example.org/toy.gbz"], stdout="/tmp/work/123/out_chunk.vg")
             ],
             work_dir="/tmp/work/123",
-            outputs=[{"name": "out_chunk.vg", "path": str(dummy_out_file), "class": "GraphSubgraphChunk", "release": False}],
+            outputs=[{"name": "out_chunk.vg", "path": str(tmp_path / "src_out_chunk.vg"), "class": "GraphSubgraphChunk", "release": False}],
             resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
         )
 

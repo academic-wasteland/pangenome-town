@@ -271,14 +271,20 @@ class TESComputeRunner(ComputeRunner):
         except StructuralValidationError as err:
             raise SemanticPolicyError(f"TES dispatch rejected task: structural validation failed: {err}") from err
 
-        tags = tes_task_payload.get("tags", {})
+        tags = tes_task_payload.get("tags")
+        if not isinstance(tags, dict):
+            raise SemanticPolicyError(
+                "TES dispatch failed: payload tags must be a dictionary containing 'rcp_digest'"
+            )
         expected_digest = tags.get("rcp_digest")
-        if not expected_digest:
+        if not isinstance(expected_digest, str) or not expected_digest:
             raise SemanticPolicyError(
                 "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
             )
 
         expected_id = tags.get("rcp_id")
+        if expected_id is not None and not isinstance(expected_id, str):
+            raise SemanticPolicyError("TES dispatch payload rcp_id must be a string")
         if expected_id and expected_id != rcp_task.get("@id"):
             raise SemanticPolicyError(
                 f"TES dispatch rcp_id mismatch: payload tags have '{expected_id}', but task @id is '{rcp_task.get('@id')}'"
