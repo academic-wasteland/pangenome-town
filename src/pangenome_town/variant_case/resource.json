@@ -1,0 +1,18 @@
+{
+  "id": "urn:wasteland:resource:yamatai:synthetic-patient-vcf",
+  "kind": "VCF",
+  "synthetic": true,
+  "owner": "yamatai",
+  "policy": {
+    "raw_data_export": false,
+    "compute_towns": ["yamatai"],
+    "phenotype_recipients": ["ubar"],
+    "selected_variant_recipients": ["ubar"]
+  },
+  "local_service": {
+    "town": "yamatai",
+    "resident": "coordinator",
+    "operation": "private-variant-rank",
+    "transport": "local"
+  }
+}

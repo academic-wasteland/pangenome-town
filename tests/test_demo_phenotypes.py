@@ -54,6 +54,9 @@ def test_live_request_requires_matching_fair_model(towns, tmp_path, wrong_model)
                            catalogue_reader=lambda: description)
     with pytest.raises(ValueError):
         stage.start(['MONDO:0000001'])
+    for unpaired in ['Ectopia lentis', 'HP:0001083']:
+        with pytest.raises(ValueError, match='label and identifier together'):
+            stage.start([unpaired])
     stage.start()
     run_id = stage.run['id']
     assert stage.run['attribution'] == 'Academic Wasteland'

@@ -61,3 +61,12 @@ def test_service_resolves_before_scoring(settings, monkeypatch):
     with pytest.raises(ValueError, match='Ambiguous'):
         search(town, {'phenotypes': ['arachnodactyly']})
     assert len(seen) == 1
+
+
+def test_label_id_pairs_are_checked(settings):
+    ids, evidence = resolve(settings, ['Ectopia lentis (HP:0001083)', 'arachnodactyly (MP:0006296)'])
+    assert ids == ['HP:0001083', 'MP:0006296']
+    assert evidence['terms'][0]['match'] == 'label and identifier'
+    for value in ['Ectopia lentis (HP:0001166)', 'Ectopia lentis (HP:9999999)']:
+        with pytest.raises(ValueError, match='mismatch'):
+            resolve(settings, [value])

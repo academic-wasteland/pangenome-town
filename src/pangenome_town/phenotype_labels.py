@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 ID = re.compile(r'(HP|MP|UPHENO):\d{7}')
+PAIR = re.compile(r'^(.+?)\s*\(((?:HP|MP):\d{7})\)$')
 
 
 def normalized(value):
@@ -70,6 +71,16 @@ def resolve(settings, terms):
     data, names = index(str(path.resolve()), path.stat().st_mtime_ns)
     resolved, details = [], []
     for term in terms:
+        pair = PAIR.fullmatch(term)
+        if pair:
+            label, identifier = pair.groups()
+            row = data['terms'].get(identifier)
+            if row is None or normalized(label) not in {normalized(x) for x in [row['label'], *row.get('synonyms', [])]}:
+                raise ValueError(f'Phenotype label/ID mismatch: {term}')
+            resolved.append(identifier)
+            details.append({'input': term, 'id': identifier, 'label': row['label'],
+                            'ontology': identifier.split(':')[0], 'match': 'label and identifier'})
+            continue
         prefix, value = None, term
         match = re.match(r'^(HPO|HP|MP):\s*(.+)$', term, re.IGNORECASE)
         if match and not ID.fullmatch(term):

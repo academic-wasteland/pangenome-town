@@ -27,6 +27,10 @@ def main():
     sent = [e for e in run['events'] if e['detail'].get('message_type') == 'sent']
     assert [e['title'] for e in sent] == ['message', 'phenotype-search', 'variant-interpretation']
     assert sent[0]['text'] == run['human_message']
+    assert 'resources' in sent[0]['detail']['body'] and 'private_case' not in sent[0]['detail']['body']
+    assert all(' (HP:' in term for term in sent[0]['detail']['body']['phenotypes'])
+    assert run['delegation']['resource_ids'] == [run['resources'][0]['id']]
+    assert len(run['delegation']['decisions']) == 3
     assert all(e['text'] == e['detail']['wire_body']['text'] for e in sent)
     replies = [e for e in run['events'] if e['detail'].get('message_type') == 'received']
     assert all(e['text'] == e['detail']['body']['text'] for e in replies)
@@ -39,6 +43,7 @@ def main():
         args.pdf.write_bytes(pdf)
     print('PASS: live INDIGENA FBN1 gene rank 3 / 1529.')
     print('PASS: FBN1 rank 2 by REVEL alone; rank 3 by phenotype; rank 1 only after combining both.')
+    print('PASS: task-level diagnosis request, paired phenotype labels/IDs, advertised-service planning and owner-controlled resource policy.')
     print('PASS: actual human request, contact delegation, Phenomancer and Themis text messages with structured payloads.')
     print('PASS: Ubar interpretation receives only selected allele, phenotype identifiers and resident routing.')
     print('PASS: PS4 + PM2_Supporting + PP2 + PP3 -> Likely pathogenic; no PP4 or fabricated patient evidence.')

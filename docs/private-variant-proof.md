@@ -12,6 +12,7 @@ Run from the pangenome-town checkout with Ubar/Yamatai configurations in the par
 ```output
 PASS: live INDIGENA FBN1 gene rank 3 / 1529.
 PASS: FBN1 rank 2 by REVEL alone; rank 3 by phenotype; rank 1 only after combining both.
+PASS: task-level diagnosis request, paired phenotype labels/IDs, advertised-service planning and owner-controlled resource policy.
 PASS: actual human request, contact delegation, Phenomancer and Themis text messages with structured payloads.
 PASS: Ubar interpretation receives only selected allele, phenotype identifiers and resident routing.
 PASS: PS4 + PM2_Supporting + PP2 + PP3 -> Likely pathogenic; no PP4 or fabricated patient evidence.

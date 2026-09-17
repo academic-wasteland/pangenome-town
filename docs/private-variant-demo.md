@@ -13,11 +13,21 @@ ranking. It is never passed as a target to either ranking algorithm.
 
 ## What runs, and where
 
-1. Human writes a request to Ubar/contact, relayed with Yamatai’s authenticated
-   identity. `message` with `resident: contact` and `workflow: phenotype-research` returns actual reply text and an ordered structured
-   delegation plan. The coordinator validates the bounded plan, then follows it.
-   This contact service selects its plan from the structured workflow fields;
-   it does not claim unrestricted natural-language reasoning.
+1. Human asks: “Help diagnose this patient from the phenotypes below and their
+   VCF, if available. Identify the most likely genetic cause and explain the
+   supporting evidence and uncertainty. Respect the access and sharing restrictions
+   attached to the patient data.”
+   Phenotypes are supplied as **label–ID pairs**, for example
+   **Ectopia lentis (HP:0001083)**, not bare labels or identifiers.
+   Yamatai attaches owner-controlled resource metadata (no file path or VCF):
+   custodian, permitted compute towns, raw-export prohibition and permitted
+   phenotype/selected-allele recipients. The contact agent receives this through
+   authenticated town relay, reads Ubar’s validated FAIR service advertisements,
+   and selects suitable service addresses. Its reply explains its decisions and
+   returns the structured plan.
+   This is a bounded diagnostic planner with implemented operation adapters,
+   not unrestricted natural-language planning. The human specifies the objective;
+   software supplies resource metadata and chooses the supported analysis steps.
 2. Yamatai sends phenotype labels to Ubar's `phenotype-search` operation. No VCF,
    genotype, sample name or variant is in this phenotype-search request.
 3. Ubar resolves HPO/MP labels, runs the installed INDIGENA model, and returns
@@ -158,3 +168,21 @@ future presentation steps, while already submitted analysis continues.
 
 Project-authored metadata and generated report prose: CC BY 4.0, credit Academic
 Wasteland. Upstream evidence retains its own terms. No clinical sign-off.
+
+## Resource policy and planning checks
+
+Yamatai’s `private_variant_demo.metadata` points to its own
+`synthetic-patient-vcf.json`. The packaged example is the default for tests.
+The resource owner must match the authenticated sending town. No available VCF
+means phenotype-only prioritization. Missing or ambiguous advertised services,
+forbidden compute locations, or forbidden disclosure recipients stop planning;
+they never trigger a permissive fallback. The coordinator validates the returned
+plan, enforces local compute restrictions, and rereads the owner’s metadata before
+sending the selected allele. A metadata change aborts disclosure. This policy is
+enforced by the demo application, not an OS sandbox or a signed consent document.
+
+The demo requires `Label (HP:0000000)` or `Label (MP:0000000)` for every term.
+Ubar checks each pair against the model’s ontology label/exact-synonym index before
+inference; mismatched or unknown pairs fail. Existing non-demo service clients may
+still use labels or IDs. Resolved machine identifiers and their canonical labels
+are recorded together in the run’s resolution evidence.

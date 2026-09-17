@@ -7,12 +7,28 @@ from pathlib import Path
 CASE = Path(__file__).with_name('variant_case')
 
 
+
+def resource_description(town):
+    """Read owner-controlled metadata without exposing the local file path."""
+    settings = town.extra.get('private_variant_demo', {})
+    if not settings.get('enabled'):
+        raise ValueError('Patient VCF is unavailable in this town')
+    path = Path(settings.get('metadata', CASE / 'resource.json')).expanduser()
+    resource = json.loads(path.read_text())
+    if resource.get('owner') != town.name:
+        raise ValueError('VCF metadata owner does not match this town')
+    return resource
+
+
 def rank(town, sender, body):
     settings = town.extra.get('private_variant_demo', {})
     if not settings.get('enabled') or sender != town.name:
         raise ValueError('Private variant analysis is restricted to the owning town identity')
     if set(body) - {'operation', 'text', 'resident', 'genes'}:
         raise ValueError('Only a gene ranking is accepted; file paths and VCF uploads are forbidden')
+    resource = resource_description(town)
+    if town.name not in resource['policy']['compute_towns']:
+        raise ValueError('Resource policy denies local computation')
     genes = body.get('genes')
     if not isinstance(genes, list) or not 1 <= len(genes) <= 50 or any(
             not isinstance(g, str) or not g or len(g) > 40 for g in genes):

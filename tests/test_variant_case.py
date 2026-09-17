@@ -17,8 +17,10 @@ from pangenome_town.variant_interpretation import EVIDENCE, evaluate, interpret
 def configured(towns, tmp_path):
     vcf = tmp_path / 'patient.vcf'
     vcf.write_bytes((CASE / 'patient.vcf').read_bytes())
+    metadata = tmp_path / 'resource.json'
+    metadata.write_bytes((CASE / 'resource.json').read_bytes())
     result = dict(towns)
-    result['yamatai'] = dataclasses.replace(towns['yamatai'], extra={'private_variant_demo': {'enabled': True, 'vcf': str(vcf)}})
+    result['yamatai'] = dataclasses.replace(towns['yamatai'], extra={'private_variant_demo': {'enabled': True, 'vcf': str(vcf), 'metadata': str(metadata)}})
     result['ubar'] = dataclasses.replace(towns['ubar'], extra={'variant_interpretation': {'enabled': True}, 'phenotype_search': {'enabled': True}})
     return result
 
@@ -80,7 +82,8 @@ def test_themis_pdf_and_strict_disclosure(configured):
     assert result['report']['classification'] == 'Not classified' and not result['report']['criteria']
 
 
-def test_full_stage_transmits_only_selected_allele_and_resets_report(configured, tmp_path):
+@pytest.mark.parametrize('revoke', [False, True])
+def test_full_stage_transmits_only_selected_allele_and_resets_report(configured, tmp_path, revoke):
     requests = []
     class Client:
         def __init__(self):
@@ -90,11 +93,18 @@ def test_full_stage_transmits_only_selected_allele_and_resets_report(configured,
             mid = str(len(requests)); requests.append((town, operation, copy.deepcopy(body), text))
             if operation == 'message':
                 from pangenome_town.research_intake import intake
-                result = intake(configured['ubar'], dict(body, text=text))
+                records = [{'@id': RECORD, 'kind': 'service', 'access': {'town': 'ubar', 'resident': 'phenomancer', 'operation': 'phenotype-search'}},
+                           {'@id': 'urn:wasteland:fair:ubar:variant-interpretation', 'kind': 'service', 'access': {'town': 'ubar', 'resident': 'themis', 'operation': 'variant-interpretation'}}]
+                result = intake(configured['ubar'], dict(body, text=text), records=records, sender='yamatai')
             elif operation == 'phenotype-search':
                 result = {'ok': True, 'checkpoint_sha256': 'fixture', 'query': {'phenotypes': TERMS},
                           'candidate_count': 1529, 'orthology': {'source': 'fixture'},
                           'results': [{'gene': gene, 'score': .5, 'human_orthologue': {'symbol': gene}} for gene in GENES]}
+                if revoke:
+                    path = Path(configured['yamatai'].extra['private_variant_demo']['metadata'])
+                    resource = json.loads(path.read_text())
+                    resource['policy']['selected_variant_recipients'] = []
+                    path.write_text(json.dumps(resource))
             else:
                 result = interpret(configured['ubar'], dict(body, text=text))
             self.replies[mid] = {'id': 'reply'+mid, 'from': town, 'kind': 'answer', 'in_reply_to': mid, 'body': result}
@@ -105,12 +115,21 @@ def test_full_stage_transmits_only_selected_allele_and_resets_report(configured,
     stage = PhenotypeStage(configured, storage=tmp_path, client_factory=Client, catalogue_reader=lambda: description)
     with pytest.raises(StageError, match='no VCF uploads'):
         stage.act('start', {'phenotypes': TERMS, 'vcf': 'private real patient'})
-    stage.start(TERMS, private_case=True)
+    stage.start(private_case=True)
     stage.approve(stage.run['id']); stage.worker.join(10)
+    if revoke:
+        assert stage.run['state'] == 'failed'
+        assert 'restrictions changed' in stage.run['events'][-1]['text']
+        assert [r[1] for r in requests] == ['message', 'phenotype-search']
+        with pytest.raises(StageError):
+            stage.report_bytes()
+        return
     assert stage.run['state'] == 'completed'
     assert stage.run['variant_benchmark']['recovered'] is True
     assert stage.report_bytes().startswith(b'%PDF-')
     assert len(requests) == 3
+    assert 'private_case' not in requests[0][2]
+    assert requests[0][2]['resources'][0]['policy']['raw_data_export'] is False
     assert requests[0][1] == 'message' and requests[0][3] == stage.run['human_message']
     assert set(requests[1][2]) == {'resident', 'phenotypes', 'limit', 'method', 'include_human_orthologues'}
     assert requests[2][:3] == ('ubar', 'variant-interpretation', {'resident': 'themis', 'variant': VARIANT, 'phenotypes': TERMS})
@@ -123,3 +142,20 @@ def test_full_stage_transmits_only_selected_allele_and_resets_report(configured,
     assert received[-1]['text'] == received[-1]['detail']['body']['text']
     stage.reset(stage.run['id'])
     with pytest.raises(StageError): stage.report_bytes()
+
+
+def test_contact_does_not_receive_forbidden_phenotypes(configured, tmp_path):
+    path = Path(configured['yamatai'].extra['private_variant_demo']['metadata'])
+    resource = json.loads(path.read_text())
+    resource['policy']['phenotype_recipients'] = []
+    path.write_text(json.dumps(resource))
+    class Client:
+        def ask(self, *args, **kwargs):
+            pytest.fail('No relay disclosure should occur')
+    stage = PhenotypeStage(configured, storage=tmp_path, client_factory=Client)
+    stage.start(private_case=True)
+    stage.approve(stage.run['id'])
+    stage.worker.join(5)
+    assert stage.run['state'] == 'failed'
+    assert 'forbid sharing phenotypes' in stage.run['events'][-1]['text']
+    assert not any(e['detail'].get('message_type') == 'sent' for e in stage.run['events'])

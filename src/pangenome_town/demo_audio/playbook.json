@@ -21,11 +21,11 @@
   "phenotypes": [
   {
     "id": "phenotype-question",
-    "text": "A fictional rare disease investigation begins with three observations: ectopia lentis, arachnodactyly, and aortic root aneurysm. These features occur in Marfan syndrome. The expected gene is F B N one. We resolve the labels in H P O and M P, then rank candidates without giving the model the expected gene. This is research prioritization, not a clinical diagnosis."
+    "text": "A clinician asks for help diagnosing a synthetic patient from their symptoms and available genetic data. Each phenotype is specified with its label and H P O identifier. The clinician does not name an algorithm or assign work to towns. The patient data carries its own access and sharing restrictions."
   },
   {
     "id": "phenotype-discovery",
-    "text": "Your written request goes through Yamatai to Ubar’s contact agent. Its actual reply delegates to Phenomancer, with a structured plan you can inspect. FAIRhaven describes the service: what it accepts, what it returns, its model version, access requirements, and known gaps. Discovery does not grant permission. This public service accepts registered town requests."
+    "text": "The contact agent reads the attached data policy and advertised services. It discovers phenotype prioritization in Ubar. The V C F may only be analysed in Yamatai, so the gene ranking travels to the data. Only a selected allele and phenotype terms may go to an external interpretation service. Inspect the actual request, the agent’s explanation, and its proposed plan."
   },
   {
     "id": "phenotype-analysis",

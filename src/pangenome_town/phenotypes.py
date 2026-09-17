@@ -17,7 +17,7 @@ def validate(body):
     if not isinstance(terms, list) or not 1 <= len(terms) <= 30 or any(
         not isinstance(x, str) or not x.strip() or len(x) > 160 or any(ord(c) < 32 for c in x)
         or (re.match(r'^(HP|MP|UPHENO):\d', x) and not re.fullmatch(r'(HP|MP|UPHENO):\d{7}', x))
-        or (':' in x and not re.match(r'^(HP|HPO|MP|UPHENO):', x, re.IGNORECASE)) for x in terms
+        or (':' in x and not re.match(r'^(HP|HPO|MP|UPHENO):', x, re.IGNORECASE) and not re.fullmatch(r'.+?\s*\((HP|MP):\d{7}\)', x)) for x in terms
     ):
         raise ValueError('phenotypes must contain 1–30 HPO/MP labels or HP, MP, UPHENO identifiers')
     limit = body.get('limit', 10)

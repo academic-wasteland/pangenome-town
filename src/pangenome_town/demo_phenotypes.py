@@ -18,8 +18,8 @@ from .phenotypes import validate
 RECORD = 'urn:wasteland:fair:ubar:indigena'
 CATALOGUE = 'https://leechuck.de/wasteland-fair/'
 REUSE = 'Demo metadata and generated result tables: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), credit Academic Wasteland. Upstream model and source-data rights are separate; no additional rights over them are granted.'
-DEFAULT_TERMS = ['HPO: Ectopia lentis', 'HPO: Arachnodactyly', 'HPO: Aortic root aneurysm']
-DEFAULT_MESSAGE = 'Please help investigate a synthetic rare-disease case using the phenotype labels below. Find candidate genes. If the private-VCF workflow is enabled, keep the VCF at Yamatai, compare variant-only and phenotype-informed rankings locally, and ask an appropriate agent for an ACMG report on the selected allele.'
+DEFAULT_TERMS = ['Ectopia lentis (HP:0001083)', 'Arachnodactyly (HP:0001166)', 'Aortic root aneurysm (HP:0002616)']
+DEFAULT_MESSAGE = 'Help diagnose this patient from the phenotypes below and their VCF, if available. Identify the most likely genetic cause and explain the supporting evidence and uncertainty. Respect the access and sharing restrictions attached to the patient data.'
 EXAMPLE_IDS = {'HP:0001083', 'HP:0001166', 'HP:0002616'}
 
 
@@ -45,17 +45,22 @@ class PhenotypeStage(DemoStage):
             if self.run:
                 raise StageError('Reset this case before starting another query.')
             query = validate({'phenotypes': DEFAULT_TERMS if phenotypes is None else phenotypes, 'limit': 20})
+            from .phenotype_labels import PAIR
+            if any(not PAIR.fullmatch(t) for t in query['phenotypes']):
+                raise StageError('Provide each phenotype as Label (HP:0000000) or Label (MP:0000000), with label and identifier together.')
+            from .private_variants import resource_description
+            resources = [resource_description(self.requester)] if private_case else []
             self.pdf = None
             self.started = time.monotonic()
             self.run = {'id': uuid.uuid4().hex, 'created': datetime.now(UTC).isoformat(), 'state': 'awaiting-run',
-                        'events': [], 'human_message': human_message.strip(), 'private_case': private_case, 'phenotypes': query['phenotypes'], 'result': None, 'fair': None,
+                        'resources': resources, 'events': [], 'human_message': human_message.strip(), 'private_case': private_case, 'phenotypes': query['phenotypes'], 'result': None, 'fair': None,
                         'reuse': REUSE, 'license': 'https://creativecommons.org/licenses/by/4.0/',
                         'attribution': 'Academic Wasteland',
                         'fictional_case': 'Synthetic patient VCF retained by Yamatai; phenotype ranking and optional single-variant interpretation. No real patient data.',
                         'access': 'Registered town identity. This public service does not require an IRB credential; no new approval is issued.'}
             self._event('human', 'yamatai/coordinator', 'Human request · local browser',
                         self.run['human_message'],
-                        detail={'transport': 'local browser to Yamatai', 'payload': {'phenotypes': self.run['phenotypes'], 'private_case': private_case}})
+                        detail={'transport': 'local browser to Yamatai', 'payload': {'phenotypes': self.run['phenotypes'], 'resources': resources}})
             return self.snapshot()
 
     def approve(self, run_id):
@@ -82,15 +87,33 @@ class PhenotypeStage(DemoStage):
             else:
                 from wasteland.client import Client
                 client = Client(Path(self.requester.extra['federation']['state']).expanduser())
+            if self.run['resources']:
+                from .private_variants import resource_description
+                resource = resource_description(self.requester)
+                if resource != self.run['resources'][0] or 'ubar' not in resource['policy']['phenotype_recipients']:
+                    raise StageError('Patient-data restrictions forbid sharing phenotypes with the contact town.')
+                self._event('yamatai/coordinator', 'human', 'Read the patient-data restrictions',
+                            'The attached VCF metadata identifies its custodian, permitted compute location and permitted disclosures. No file path or genomic contents are sent to the contact agent.',
+                            detail={'resources': self.run['resources']})
             delegation = self._request(client, 'ubar', 'message',
-                {'resident': 'contact', 'workflow': 'phenotype-research', 'phenotypes': self.run['phenotypes'], 'private_case': self.run['private_case']},
+                {'resident': 'contact', 'workflow': 'phenotype-research', 'phenotypes': self.run['phenotypes'], 'resources': self.run['resources']},
                 text=self.run['human_message'], sender='human via yamatai', recipient='ubar/contact')
             plan = delegation.get('plan', [])
-            expected = [('ubar', 'phenomancer', 'phenotype-search')]
-            if self.run['private_case']:
-                expected += [('yamatai', 'coordinator', 'private-variant-rank'), ('ubar', 'themis', 'variant-interpretation')]
-            if [(p.get('town'), p.get('resident'), p.get('operation')) for p in plan] != expected or plan[0].get('record') != RECORD:
+            expected_operations = ['phenotype-search']
+            if self.run['resources']:
+                expected_operations += ['private-variant-rank', 'variant-interpretation']
+            if not isinstance(plan, list) or any(not isinstance(p, dict) for p in plan) or [p.get('operation') for p in plan] != expected_operations:
                 raise StageError('Contact returned an unsupported delegation plan.')
+            if plan[0].get('town') != 'ubar' or plan[0].get('record') != RECORD or not plan[0].get('resident'):
+                raise StageError('Contact selected an untrusted phenotype service.')
+            if self.run['resources']:
+                resource = self.run['resources'][0]
+                if (plan[1] != resource['local_service']
+                        or plan[0]['town'] not in resource['policy']['phenotype_recipients']
+                        or plan[2].get('town') not in resource['policy']['selected_variant_recipients']
+                        or plan[2].get('town') != 'ubar'
+                        or not plan[2].get('resident')):
+                    raise StageError('Delegation conflicts with patient-data restrictions.')
             with self.lock:
                 self.run['delegation'] = delegation
             description = self._catalogue()
@@ -103,10 +126,14 @@ class PhenotypeStage(DemoStage):
                 self._event('fairhaven', 'yamatai', 'A service with a description',
                             'FAIRhaven describes Ubar’s phenotype search: inputs, species, model version, access rules and reuse gaps. A listing is not permission or scientific validation.',
                             detail={'record_id': RECORD, 'description_digest': description['digest'], 'checked': description['checked']})
+            if self.run['resources']:
+                from .private_variants import resource_description
+                if resource_description(self.requester) != self.run['resources'][0]:
+                    raise StageError('Patient-data restrictions changed; stop before sharing phenotypes.')
             body = {'resident': plan[0]['resident'], 'phenotypes': self.run['phenotypes'], 'limit': 20, 'method': 'indigena', 'include_human_orthologues': True}
             result = self._request(client, plan[0]['town'], plan[0]['operation'], body,
                 text='Contact has delegated phenotype prioritization to you. Please resolve these labels and return ranked genes using INDIGENA. No VCF or variant data are attached.',
-                recipient='ubar/phenomancer')
+                recipient=plan[0]['town'] + '/' + plan[0]['resident'])
             if record.get('version') != 'sha256:' + str(result.get('checkpoint_sha256')):
                 raise StageError('The returned model differs from the FAIR description; results withheld until metadata is refreshed.')
             if not result.get('orthology') or not result.get('results'):
@@ -173,10 +200,15 @@ class PhenotypeStage(DemoStage):
             raise StageError('No local variants survived filtering for this gene list. Edit the phenotypes or use the Marfan example.')
         selected = local['retained'][0]['variant']
         # A new, allowlisted request: never forward the local result object or VCF.
-        request = {'resident': 'themis', 'variant': selected, 'phenotypes': genes['query']['phenotypes']}
+        from .private_variants import resource_description
+        resource = resource_description(self.requester)
+        step = self.run['delegation']['plan'][-1]
+        if resource != self.run['resources'][0] or step['town'] not in resource['policy']['selected_variant_recipients']:
+            raise StageError('Patient-data restrictions changed; stop before disclosing the allele.')
+        request = {'resident': step['resident'], 'variant': selected, 'phenotypes': genes['query']['phenotypes']}
         from .variant_interpretation import request_text
-        interpretation = self._request(client, 'ubar', 'variant-interpretation', request,
-                                       text=request_text(selected, genes['query']['phenotypes']), recipient='ubar/themis')
+        interpretation = self._request(client, step['town'], step['operation'], request,
+                                       text=request_text(selected, genes['query']['phenotypes']), recipient=step['town'] + '/' + step['resident'])
         report = interpretation['report']
         if report.get('variant') != selected or report.get('agent') != 'themis':
             raise StageError('Themis returned a report for a different variant or agent.')
