@@ -205,9 +205,12 @@ class GraphTools:
             contract_id = getattr(manifest, "id", None)
             bundle_digest = getattr(manifest, "bundle_digest", None)
         else:
-            rendered_manifest = contract.render(self.town, self.town.city_root / "contract")
-            contract_id = rendered_manifest.id
-            bundle_digest = rendered_manifest.bundle_digest
+            manifest_path = self.town.city_root / "contract" / f"{self.town.name}.contract.json"
+            if not manifest_path.is_file():
+                raise ValueError(f"trusted contract manifest not found at {manifest_path}")
+            loaded_manifest = contract.ContractManifest.load(manifest_path)
+            contract_id = loaded_manifest.id
+            bundle_digest = loaded_manifest.bundle_digest
 
         task_uuid = f"urn:uuid:{uuid.uuid4()}"
         resolved_requester = requester or f"https://w3id.org/academic-wasteland/{self.town.name}/agents/townsfolk"

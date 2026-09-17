@@ -149,7 +149,15 @@ def build_tes_task(
                 existing_urls.add(url)
     extracted_outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
     if outputs:
-        extracted_outputs.extend(outputs)
+        existing_paths = {item.get("path") for item in extracted_outputs}
+        for item in outputs:
+            path = item.get("path")
+            existing = next((entry for entry in extracted_outputs if entry.get("path") == path), None)
+            if existing is not None:
+                existing.update(item)
+            else:
+                extracted_outputs.append(item)
+                existing_paths.add(path)
 
     executor: dict[str, Any] = {
         "image": executor_image,

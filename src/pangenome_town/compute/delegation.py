@@ -173,6 +173,8 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                    'executor': town.name, 'site': task.get('site'), 'phase': phase, **detail})
     try:
         datasets, region, site = authorize(town, task, grants)
+        if site.driver == "tes" and driver is not None:
+            raise ComputeError("Custom driver injection is not permitted for TES execution")
     except (ComputeError, ValueError) as error:
         event('permission_required' if str(error).startswith('waiting for') else 'rejected', message=str(error))
         if own_log:
@@ -209,26 +211,36 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                 if not manifest_path.exists():
                     raise SemanticPolicyError(f"TES execution requires town contract manifest at {manifest_path}")
                 manifest = contract.ContractManifest.load(manifest_path)
-                gate = SemanticGate(manifest=manifest)
+                # Build admission assertions based on authorized delegation facts
+                from research_commons import axioms
+                admission_axioms = [
+                    axioms.DataAccessCovered(
+                        agent=task["requester"],
+                        dataset=f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
+                        town=town.name,
+                    ),
+                    axioms.EthicsCovered(
+                        agent=task["requester"],
+                        task_class=f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
+                        town=town.name,
+                    ),
+                ]
+                from research_commons.reasoning import KMRunner, SemanticValidator
+                reasoner = KMRunner()
+                validator = SemanticValidator(manifest, reasoner)
+                gate = SemanticGate(
+                    manifest=manifest,
+                    reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a),
+                )
                 ds_entity = {
                     "@id": f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
-                    "@type": "PublicDataset",
+                    "@type": "RestrictedDataset",
                 }
-                reg_parsed = None
-                if region:
-                    from ..tools.graph import Region
-                    reg_obj = Region.parse(region, town.default_reference)
-                    reg_parsed = {
-                        "@type": "GenomicRegion",
-                        "referenceName": reg_obj.reference or town.default_reference,
-                        "start": reg_obj.start or 0,
-                        "end": reg_obj.end or 1000000,
-                    }
                 task_doc = pipeline.task_document(
                     town,
                     f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
                     datasets=(ds_entity,),
-                    region=reg_parsed,
+                    region=region,
                     requester=task["requester"],
                     request_id=task["id"],
                     include_graph=False,
@@ -261,6 +273,12 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
         event('released', custodians=sorted({d['custodian'] for d in datasets}), message='Permitted outputs released')
         return payload
     except Exception as error:
+        try:
+            db.rollback()
+            db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
+            db.commit()
+        except sqlite3.Error:
+            log.event(town.name, 'delegation_cleanup_error', message_id, {'task_id': task.get('id')})
         event('failed', message=str(error)[:500])
         raise
     finally:

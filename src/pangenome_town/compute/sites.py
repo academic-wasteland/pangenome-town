@@ -63,10 +63,20 @@ class Site:
         return f"https://w3id.org/academic-wasteland/{town_name}/sites/{self.name}"
 
     def as_dict(self) -> dict[str, Any]:
+        redacted_output_prefix = None
+        if self.output_url_prefix:
+            from urllib.parse import urlsplit, urlunsplit
+            parsed = urlsplit(self.output_url_prefix)
+            # Redact userinfo and query parameters from serialized provenance
+            netloc = parsed.hostname or ""
+            if parsed.port:
+                netloc = f"{netloc}:{parsed.port}"
+            redacted_output_prefix = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
         return {
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
             "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition, "storage": self.storage,
-            "output_url_prefix": self.output_url_prefix,
+            "output_url_prefix": redacted_output_prefix,
             "token": "***" if self.token else None,
             "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
@@ -508,8 +518,9 @@ class TESDriver:
 
         runner = TESComputeRunner(
             endpoint_url=self.site.host or "http://127.0.0.1:8000",
-            bearer_token=self.site.token or self.site.paths.get("token", ""),
+            bearer_token=self.site.token or "",
             gate=gate,
+            allow_insecure_http=bool(self.options.get("allow_insecure_http")),
         )
 
         output_prefix = (
@@ -547,10 +558,13 @@ class TESDriver:
                         path_replacements[ds["url"]] = f"{container_input_dir}/{Path(ds['url']).name}"
                     elif ds_id in self.site.paths:
                         dataset_storage_map[ds_id] = self.site.paths[ds_id]
-                    # Also map the short name suffix if present
-                    short_name = ds_id.rstrip("/").split("/")[-1]
-                    if short_name in self.site.paths:
-                        dataset_storage_map[ds_id] = self.site.paths[short_name]
+                    else:
+                        # Fallback mapping from logical keys (e.g. vcf, graph)
+                        short_name = ds_id.rstrip("/").split("/")[-1]
+                        for candidate_key in (short_name, "vcf" if "vcf" in ds_id.lower() or "genotype" in ds_id.lower() else "graph"):
+                            if candidate_key in self.site.paths:
+                                dataset_storage_map[ds_id] = self.site.paths[candidate_key]
+                                break
 
         # Map steps with stdout handling and translate paths to container mount paths
         commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]

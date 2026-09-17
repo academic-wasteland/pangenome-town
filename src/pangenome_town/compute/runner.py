@@ -216,11 +216,22 @@ class TESComputeRunner(ComputeRunner):
         bearer_token: str,
         gate: SemanticGate | None = None,
         client: httpx.AsyncClient | None = None,
+        allow_insecure_http: bool = False,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
         self.bearer_token = bearer_token
         self.gate = gate
         self._client = client
+        self.allow_insecure_http = allow_insecure_http
+
+        from urllib.parse import urlparse
+        parsed = urlparse(self.endpoint_url)
+        is_loopback = (parsed.hostname or "") in {"localhost", "127.0.0.1", "::1"}
+        if bearer_token and not is_loopback and parsed.scheme != "https" and not allow_insecure_http:
+            raise ComputeError(
+                f"TES endpoint '{self.endpoint_url}' requires HTTPS to transmit credentials unless allow_insecure_http is true"
+            )
+
         self.headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
