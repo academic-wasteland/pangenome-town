@@ -9,20 +9,382 @@ the same validator. Only outputs the template marks `release = true` leave the w
 from __future__ import annotations
 
 import dataclasses
+import functools
+import hashlib
+import hmac
 import json
 import shutil
 import time
 import uuid
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+import httpx
+from research_commons.contracts import ContractManifest
+from research_commons.km import KMRunner, Reasoner
+from research_commons.semantic import SemanticValidator
 
 from ..config import TownConfig
 from ..exchange import sha256_file
 from ..tools.graph import Call, Region, _version
-from . import ComputeError
+from . import ComputeError, SemanticPolicyError
 from .sites import RenderedJob, Site, Step, driver_for, load_sites, reachable
 from .workflows import TEMPLATES, plan, render, validate
+
+
+class ComputeState(str, Enum):
+    QUEUED = "QUEUED"
+    INITIALIZING = "INITIALIZING"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    COMPLETE = "COMPLETE"
+    SYSTEM_ERROR = "SYSTEM_ERROR"
+    CANCELED = "CANCELED"
+    CANCELING = "CANCELING"
+    PREEMPTED = "PREEMPTED"
+    EXECUTOR_ERROR = "EXECUTOR_ERROR"
+    UNKNOWN = "UNKNOWN"
+
+
+TES_STATE_MAPPING: dict[str, ComputeState] = {
+    "QUEUED": ComputeState.QUEUED,
+    "INITIALIZING": ComputeState.INITIALIZING,
+    "RUNNING": ComputeState.RUNNING,
+    "PAUSED": ComputeState.PAUSED,
+    "COMPLETE": ComputeState.COMPLETE,
+    "SYSTEM_ERROR": ComputeState.SYSTEM_ERROR,
+    "CANCELED": ComputeState.CANCELED,
+    "CANCELLED": ComputeState.CANCELED,
+    "CANCELING": ComputeState.CANCELING,
+    "PREEMPTED": ComputeState.PREEMPTED,
+    "EXECUTOR_ERROR": ComputeState.EXECUTOR_ERROR,
+    "UNKNOWN": ComputeState.UNKNOWN,
+}
+
+
+class SemanticGate:
+    """ADR 0001 Semantic Gate: Gates execution dispatch via SROIQ reasoning.
+
+    The protocol defines a strict five-valued semantic validation result:
+    `entailed`, `contradicted`, `unknown`, `invalid`, or `indeterminate`.
+    Only `entailed` under a locally trusted manifest satisfies an execution gate.
+    Open-world absence (`unknown`) is explicitly never permission.
+    """
+
+    def __init__(
+        self,
+        manifest: ContractManifest | Path | str | None = None,
+        reasoner: Reasoner | None = None,
+    ) -> None:
+        if isinstance(manifest, (str, Path)):
+            manifest = ContractManifest.load(Path(manifest))
+        self.manifest = manifest
+        self.reasoner = reasoner
+
+    def evaluate(
+        self,
+        rcp_task: dict[str, Any],
+        manifest: ContractManifest | Path | str | None = None,
+        reasoner: Reasoner | None = None,
+    ) -> str:
+        target_manifest = manifest or self.manifest
+        if isinstance(target_manifest, (str, Path)):
+            target_manifest = ContractManifest.load(Path(target_manifest))
+        target_reasoner = reasoner or self.reasoner
+        if target_manifest is None:
+            raise SemanticPolicyError(
+                "Semantic gating cannot evaluate without a trusted contract manifest"
+            )
+
+        # Bind rcp_task contract declarations against trusted manifest
+        task_contract = rcp_task.get("semanticContract")
+        if task_contract != target_manifest.id:
+            raise SemanticPolicyError(
+                f"Semantic gating rejected task: semanticContract '{task_contract}' does not match trusted manifest id '{target_manifest.id}'"
+            )
+        task_profile = rcp_task.get("ontologyProfile")
+        if task_profile != target_manifest.bundle_digest:
+            raise SemanticPolicyError(
+                f"Semantic gating rejected task: ontologyProfile '{task_profile}' does not match trusted manifest bundleDigest '{target_manifest.bundle_digest}'"
+            )
+
+        if callable(target_reasoner) and not hasattr(target_reasoner, "validate") and not hasattr(target_reasoner, "evaluate_gate") and not hasattr(target_reasoner, "classify"):
+            try:
+                result = target_reasoner(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: callable reasoner execution error: {exc}") from exc
+            if isinstance(result, dict) and "status" in result:
+                status = result["status"]
+            else:
+                raise SemanticPolicyError("Semantic gating requires a structured reasoning validation report with a 'status' field")
+        elif target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
+            try:
+                result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: reasoner evaluate_gate error: {exc}") from exc
+            if isinstance(result, str):
+                status = result
+            elif isinstance(result, dict) and "status" in result:
+                status = result["status"]
+            else:
+                status = str(result)
+        elif target_reasoner is not None and hasattr(target_reasoner, "validate"):
+            try:
+                result = target_reasoner.validate(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: reasoner validate error: {exc}") from exc
+            status = result.get("status") if isinstance(result, dict) else str(result)
+        elif target_reasoner is not None and hasattr(target_reasoner, "classify"):
+            try:
+                report = SemanticValidator(target_manifest, target_reasoner).validate(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: semantic validator error: {exc}") from exc
+            status = report.get("status", "unknown")
+        else:
+            try:
+                import shutil
+                km_exec = shutil.which("km")
+                timeout = target_manifest.timeout_seconds if hasattr(target_manifest, "timeout_seconds") else 60
+                active_reasoner = target_reasoner or (KMRunner(km_exec, timeout_seconds=timeout) if km_exec else None)
+                if active_reasoner is None:
+                    raise SemanticPolicyError("Semantic gating failed: no reasoner available (km not installed)")
+                validator = SemanticValidator(target_manifest, active_reasoner)
+                report = validator.validate(rcp_task)
+                status = report.get("status", "unknown")
+            except SemanticPolicyError:
+                raise
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating execution error: {exc}") from exc
+
+        if status != "entailed":
+            raise SemanticPolicyError(
+                f"Semantic gating rejected execution: status is '{status}' (must be strictly 'entailed')"
+            )
+        return status
+
+    def __call__(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        import inspect
+
+        sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            bound = None
+            try:
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+            except TypeError:
+                pass
+
+            rcp_task = None
+            if bound:
+                for param_name in ("rcp_task", "task", "document", "task_doc"):
+                    val = bound.arguments.get(param_name)
+                    if isinstance(val, dict) and ("@id" in val or "ResearchTask" in str(val.get("@type", ""))):
+                        rcp_task = val
+                        break
+            if rcp_task is None:
+                rcp_task = kwargs.get("rcp_task") or kwargs.get("task") or kwargs.get("document")
+            if rcp_task is None:
+                for arg in args:
+                    if isinstance(arg, dict) and (
+                        "@id" in arg or "ResearchTask" in str(arg.get("@type", ""))
+                    ):
+                        rcp_task = arg
+                        break
+            if rcp_task is None:
+                raise SemanticPolicyError(
+                    "Semantic gating rejected execution: no recognizable RCP task provided to gated function"
+                )
+            self.evaluate(rcp_task)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+
+class ComputeRunner:
+    """Base interface for dispatching and polling compute tasks."""
+
+    async def dispatch(self, tes_task_payload: dict[str, Any]) -> str:
+        raise NotImplementedError
+
+    async def poll_status(self, task_id: str) -> str:
+        raise NotImplementedError
+
+    async def cancel(self, task_id: str) -> None:
+        pass
+
+
+class TESComputeRunner(ComputeRunner):
+    """GA4GH Task Execution Service (TES) v1.1 async compute client."""
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        bearer_token: str,
+        gate: SemanticGate | None = None,
+        client: httpx.AsyncClient | None = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
+        self.endpoint_url = endpoint_url.rstrip("/")
+        self.bearer_token = bearer_token
+        self.gate = gate
+        self._client = client
+        self.allow_insecure_http = allow_insecure_http
+
+        from urllib.parse import urlparse
+        parsed = urlparse(self.endpoint_url)
+        is_loopback = (parsed.hostname or "") in {"localhost", "127.0.0.1", "::1"}
+        if not is_loopback and parsed.scheme != "https" and not allow_insecure_http:
+            raise ComputeError(
+                f"TES endpoint '{self.endpoint_url}' requires HTTPS unless allow_insecure_http is true"
+            )
+
+        self.headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if bearer_token:
+            self.headers["Authorization"] = f"Bearer {bearer_token}"
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient()
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+
+    async def dispatch(
+        self,
+        tes_task_payload: dict[str, Any],
+        rcp_task: dict[str, Any] | None = None,
+    ) -> str:
+        """Sends an HTTP POST to {endpoint_url}/v1/tasks. Returns the TES task id string.
+
+        When a SemanticGate is configured or an rcp_task is provided, validates that the task
+        is semantically entailed and that the payload's rcp_digest matches the exact task.
+        """
+        if self.gate is None:
+            raise SemanticPolicyError("TES dispatch requires a SemanticGate")
+
+        if rcp_task is None:
+            raise SemanticPolicyError(
+                "TES dispatch failed semantic gating: no source RCP task provided"
+            )
+
+        from research_commons.schema import StructuralValidationError, validate_message
+
+        try:
+            validate_message(rcp_task)
+        except StructuralValidationError as err:
+            raise SemanticPolicyError(f"TES dispatch rejected task: structural validation failed: {err}") from err
+
+        tags = tes_task_payload.get("tags")
+        if not isinstance(tags, dict):
+            raise SemanticPolicyError(
+                "TES dispatch failed: payload tags must be a dictionary containing 'rcp_digest'"
+            )
+        expected_digest = tags.get("rcp_digest")
+        if not isinstance(expected_digest, str) or not expected_digest:
+            raise SemanticPolicyError(
+                "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
+            )
+
+        expected_id = tags.get("rcp_id")
+        if expected_id is not None and not isinstance(expected_id, str):
+            raise SemanticPolicyError("TES dispatch payload rcp_id must be a string")
+        if expected_id and expected_id != rcp_task.get("@id"):
+            raise SemanticPolicyError(
+                f"TES dispatch rcp_id mismatch: payload tags have '{expected_id}', but task @id is '{rcp_task.get('@id')}'"
+            )
+
+        from ..exchange import canonical
+
+        canonical_bytes = canonical(rcp_task)
+        if isinstance(canonical_bytes, str):
+            canonical_bytes = canonical_bytes.encode("utf-8")
+        actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
+        if not hmac.compare_digest(actual_digest, expected_digest):
+            raise SemanticPolicyError(
+                f"TES dispatch digest mismatch: payload has {expected_digest}, "
+                f"but task computed {actual_digest}"
+            )
+
+        # Verify rcp_source_jsonld in tags matches verbatim canonical JSON if present
+        source_jsonld = tags.get("rcp_source_jsonld")
+        if source_jsonld and source_jsonld != (canonical_bytes.decode("utf-8") if isinstance(canonical_bytes, bytes) else canonical_bytes):
+            raise SemanticPolicyError("TES dispatch payload rcp_source_jsonld does not match verbatim canonical task")
+
+        self.gate.evaluate(rcp_task)
+
+        url = f"{self.endpoint_url}/v1/tasks"
+        client = await self._get_client()
+        try:
+            response = await client.post(
+                url,
+                json=tes_task_payload,
+                headers=self.headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ComputeError(
+                f"TES dispatch failed with HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ComputeError(f"TES dispatch network error: {exc}") from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ComputeError("TES dispatch returned invalid JSON") from exc
+
+        if not isinstance(data, dict) or not data.get("id") or not isinstance(data["id"], str):
+            raise ComputeError(f"TES dispatch returned invalid response: {data}")
+        return data["id"]
+
+    async def poll_status(self, task_id: str) -> str:
+        """Sends an HTTP GET to {endpoint_url}/v1/tasks/{task_id}. Returns ComputeState enum value."""
+        url = f"{self.endpoint_url}/v1/tasks/{task_id}"
+        client = await self._get_client()
+        try:
+            response = await client.get(
+                url,
+                headers=self.headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return ComputeState.UNKNOWN.value
+            raise ComputeError(
+                f"TES poll failed with HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ComputeError(f"TES poll network error: {exc}") from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ComputeError("TES poll returned invalid JSON") from exc
+
+        raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
+        if not isinstance(raw_state, str):
+            raw_state = "UNKNOWN"
+        state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
+        return state.value
+
+    async def cancel(self, task_id: str) -> None:
+        """Sends an HTTP POST to {endpoint_url}/v1/tasks/{task_id}:cancel."""
+        url = f"{self.endpoint_url}/v1/tasks/{task_id}:cancel"
+        client = await self._get_client()
+        try:
+            response = await client.post(url, headers=self.headers)
+            response.raise_for_status()
+        except (httpx.HTTPError, httpx.RequestError):
+            return  # Best effort cancellation
 
 AGGREGATE_HEADER = "CHROM\tPOS\tREF\tALT\tallele_count\tallele_number\talt_frequency\n"
 # The same aggregation as `aggregate_genotypes`, run on a remote site so individual genotypes never leave it.

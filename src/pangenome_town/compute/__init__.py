@@ -12,8 +12,32 @@ class ComputeError(RuntimeError):
     """A site, workflow, or job could not be used; the message says why."""
 
 
-from .runner import run_task
+class SemanticPolicyError(ComputeError):
+    """ADR 0001: Raised when semantic gating fails under SROIQ reasoning."""
+
+
+from .runner import (
+    ComputeRunner,
+    ComputeState,
+    SemanticGate,
+    TESComputeRunner,
+    run_task,
+)
 from .sites import Site, load_sites, reachable
 from .workflows import TEMPLATES, plan, validate
 
-__all__ = ["TEMPLATES", "ComputeError", "Site", "load_sites", "plan", "reachable", "run_task", "validate"]
+__all__ = [
+    "TEMPLATES",
+    "ComputeError",
+    "ComputeRunner",
+    "ComputeState",
+    "SemanticGate",
+    "SemanticPolicyError",
+    "Site",
+    "TESComputeRunner",
+    "load_sites",
+    "plan",
+    "reachable",
+    "run_task",
+    "validate",
+]

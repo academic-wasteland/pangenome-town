@@ -11,10 +11,23 @@ from types import SimpleNamespace
 import pytest
 
 from pangenome_town import config
-from pangenome_town.compute import TEMPLATES, ComputeError, load_sites, plan, reachable, run_task, validate
+from pangenome_town.compute import (
+    TEMPLATES,
+    ComputeError,
+    ComputeState,
+    SemanticGate,
+    SemanticPolicyError,
+    TESComputeRunner,
+    load_sites,
+    plan,
+    reachable,
+    run_task,
+    validate,
+)
 from pangenome_town.compute import sites as sites_module
 from pangenome_town.compute.runner import pick_site
 from pangenome_town.compute.sites import LocalDriver, RenderedJob, Site, SshDriver, Step
+from pangenome_town.compute.tes_schema import build_tes_task
 from pangenome_town.compute.workflows import AGGREGATE, INDIVIDUAL, render
 from pangenome_town.tools.graph import Region
 
@@ -509,3 +522,668 @@ tools = ["bcftools"]
     site, diagnostics = pick_site(town, "allele-frequency", ("jpt-individual-genotypes",))
     assert site.name == "cluster"
     assert any(item["site"] == "workstation" and "does not hold jpt-individual-genotypes" in item["detail"] for item in diagnostics)
+
+
+# Semantic Gating (ADR 0001) & TES Runner tests --------------------------------------------------
+
+
+@pytest.fixture
+def trusted_manifest(towns, tmp_path):
+    from pangenome_town.rcp import contract
+    return contract.render(towns["ubar"], tmp_path / "contract")
+
+
+@pytest.mark.parametrize(
+    ("reasoner_status", "should_pass"),
+    [
+        ("entailed", True),
+        ("contradicted", False),
+        ("unknown", False),
+        ("invalid", False),
+        ("indeterminate", False),
+    ],
+)
+def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass, trusted_manifest):
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return reasoner_status
+
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=MockKMReasoner())
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+        "name": "Test Task",
+        "semanticContract": trusted_manifest.id,
+        "ontologyProfile": trusted_manifest.bundle_digest,
+    }
+
+    if should_pass:
+        assert gate.evaluate(sample_rcp_task) == "entailed"
+
+        @gate
+        def dispatch_action(task):
+            return "dispatched"
+
+        assert dispatch_action(sample_rcp_task) == "dispatched"
+    else:
+        with pytest.raises(SemanticPolicyError) as exc_info:
+            gate.evaluate(sample_rcp_task)
+        assert reasoner_status in str(exc_info.value)
+
+        @gate
+        def dispatch_action(task):
+            return "dispatched"
+
+        with pytest.raises(SemanticPolicyError):
+            dispatch_action(sample_rcp_task)
+
+
+def test_semantic_gate_decorator_fails_closed_without_task(trusted_manifest):
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=MockKMReasoner())
+
+    @gate
+    def run_without_task(x, y):
+        return x + y
+
+    with pytest.raises(SemanticPolicyError, match="no recognizable RCP task"):
+        run_without_task(1, 2)
+
+
+def test_semantic_gate_requires_trusted_manifest():
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(reasoner=MockKMReasoner())
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+    }
+    with pytest.raises(SemanticPolicyError, match="without a trusted contract manifest"):
+        gate.evaluate(sample_rcp_task)
+
+
+def test_build_tes_task_schema_mapping():
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:test-task-12345",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+        "name": "Extract region chr1",
+        "description": "Extracting subgraph chunk",
+        "usesDataset": [
+            {
+                "@id": "https://example.org/datasets/graph.gbz",
+                "@type": "PublicDataset",
+                "url": "https://example.org/datasets/graph.gbz",
+            }
+        ],
+        "outputs": [
+            {
+                "name": "chunk.vg",
+                "path": "/container/output/chunk.vg",
+            }
+        ],
+    }
+    image = "quay.io/vgteam/vg:latest"
+    command = ["vg", "chunk", "-x", "/container/input/graph.gbz"]
+
+    tes_task = build_tes_task(
+        sample_rcp_task,
+        executor_image=image,
+        command=command,
+        output_url_prefix="s3://output-bucket/runs",
+    )
+
+    assert isinstance(tes_task, dict)
+    assert tes_task["name"] == "Extract region chr1"
+    assert tes_task["description"] == "Extracting subgraph chunk"
+
+    # Inputs mapping
+    assert len(tes_task["inputs"]) == 1
+    assert tes_task["inputs"][0]["url"] == "https://example.org/datasets/graph.gbz"
+    assert tes_task["inputs"][0]["path"] == "/container/input/graph.gbz"
+
+    # Outputs mapping
+    assert len(tes_task["outputs"]) == 1
+    assert tes_task["outputs"][0]["path"] == "/container/output/chunk.vg"
+    assert tes_task["outputs"][0]["url"] == "s3://output-bucket/runs/chunk.vg"
+
+    # Executors mapping
+    assert len(tes_task["executors"]) == 1
+    assert tes_task["executors"][0]["image"] == image
+    assert tes_task["executors"][0]["command"] == command
+
+    # Tags mapping with rcp_id and canonical digest
+    assert "tags" in tes_task
+    assert tes_task["tags"]["rcp_id"] == "urn:uuid:test-task-12345"
+    assert tes_task["tags"]["rcp_digest"].startswith("sha256:")
+
+
+@pytest.mark.asyncio
+async def test_tes_compute_runner_dispatch_and_poll(trusted_manifest):
+    import respx
+
+    endpoint = "https://tes.example.org"
+    token = "secret-bearer-token"
+
+    class EntailedReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=EntailedReasoner())
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token, gate=gate)
+
+    rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/context.jsonld",
+        "@id": "urn:uuid:test-job-999",
+        "@type": "ResearchTask",
+        "semanticContract": trusted_manifest.id,
+        "ontologyProfile": trusted_manifest.bundle_digest,
+        "partOfRequest": "urn:uuid:req-1",
+        "taskType": "https://w3id.org/academic-wasteland/pangenome/v0.1/RegionExtractionTask",
+        "requestedBy": {"@id": "https://example.org/agent", "@type": "Agent"},
+        "usesDataset": [{"@id": "https://example.org/ds", "@type": "PublicDataset"}],
+    }
+    from pangenome_town.exchange import canonical
+
+    rcp_bytes = canonical(rcp_task)
+    if isinstance(rcp_bytes, str):
+        rcp_bytes = rcp_bytes.encode("utf-8")
+    import hashlib
+    digest = f"sha256:{hashlib.sha256(rcp_bytes).hexdigest()}"
+
+    tes_payload = {
+        "name": "tes-job",
+        "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+        "tags": {"rcp_digest": digest},
+    }
+
+    with respx.mock(base_url=endpoint) as respx_mock:
+        post_route = respx_mock.post("/v1/tasks").respond(
+            status_code=200,
+            json={"id": "tes-task-999"},
+        )
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert task_id == "tes-task-999"
+        assert post_route.called
+        assert post_route.calls.last.request.headers["Authorization"] == f"Bearer {token}"
+
+        get_route = respx_mock.get("/v1/tasks/tes-task-999").respond(
+            status_code=200,
+            json={"id": "tes-task-999", "state": "RUNNING"},
+        )
+        state = await runner.poll_status(task_id)
+        assert state == ComputeState.RUNNING.value
+        assert get_route.called
+        assert get_route.calls.last.request.headers["Authorization"] == f"Bearer {token}"
+
+        # Test state mapping for all standard TES states
+        states_to_test = [
+            ("QUEUED", ComputeState.QUEUED.value),
+            ("INITIALIZING", ComputeState.INITIALIZING.value),
+            ("RUNNING", ComputeState.RUNNING.value),
+            ("COMPLETE", ComputeState.COMPLETE.value),
+            ("SYSTEM_ERROR", ComputeState.SYSTEM_ERROR.value),
+            ("CANCELED", ComputeState.CANCELED.value),
+            ("EXECUTOR_ERROR", ComputeState.EXECUTOR_ERROR.value),
+            ("PAUSED", ComputeState.PAUSED.value),
+            ("PREEMPTED", ComputeState.PREEMPTED.value),
+            ("CANCELING", ComputeState.CANCELING.value),
+        ]
+        for tes_st, expected_comp_st in states_to_test:
+            respx_mock.get(f"/v1/tasks/{tes_st}").respond(
+                status_code=200,
+                json={"id": tes_st, "state": tes_st},
+            )
+            polled = await runner.poll_status(tes_st)
+            assert polled == expected_comp_st
+
+
+@pytest.mark.asyncio
+async def test_vg_chunk_tes_dispatch(towns, tmp_path):
+    import respx
+
+    from pangenome_town.tools import graph
+
+    # Ensure ubar town has a dummy graph file if vg is not installed
+    town = towns["ubar"]
+    if not town.has_graph:
+        dummy_graph = tmp_path / "toy.gbz"
+        dummy_graph.write_bytes(b"dummy gbz content")
+        town = dataclasses.replace(town, graph=dummy_graph)
+
+    # 1. Setup mock reasoner strictly returning 'entailed'
+    from pangenome_town.rcp import contract
+    manifest = contract.render(town, tmp_path / "contract")
+
+    class EntailedReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(manifest=manifest, reasoner=EntailedReasoner())
+
+    # 2. Build VG chunk operation task
+    tools = graph.GraphTools(town)
+    region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
+    tes_payload, rcp_task = tools.build_tes_chunk_task(
+        region,
+        manifest=manifest,
+        graph_url="https://example-bucket.org/toy.gbz",
+        output_url_prefix="https://example-bucket.org/outputs",
+    )
+
+    # 3. Assert build_tes_task generated executors with vg image and command
+    assert len(tes_payload["executors"]) == 1
+    executor = tes_payload["executors"][0]
+    assert executor["image"] == graph.VG_IMAGE_DEFAULT
+    assert executor["command"][0] == "vg"
+    assert executor["command"][1] == "chunk"
+    assert executor["stdout"].endswith(".vg")
+    assert tes_payload["outputs"][0]["url"].endswith(".vg")
+
+    # 4. Pass semantic gate
+    assert gate.evaluate(rcp_task) == "entailed"
+
+    # 5. Mock HTTP endpoint
+    endpoint = "https://tes.service.org"
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token="mock-token", gate=gate)
+
+    with respx.mock(base_url=endpoint) as respx_mock:
+        post_route = respx_mock.post("/v1/tasks").respond(
+            status_code=200,
+            json={"id": "mock-tes-id"},
+        )
+        get_route = respx_mock.get("/v1/tasks/mock-tes-id").respond(
+            status_code=200,
+            json={"id": "mock-tes-id", "state": "COMPLETE"},
+        )
+
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert task_id == "mock-tes-id"
+        assert post_route.called
+
+        final_state = await runner.poll_status(task_id)
+        assert final_state == ComputeState.COMPLETE.value
+        assert get_route.called
+
+
+@pytest.mark.asyncio
+async def test_live_tes_opt_in_dispatch(monkeypatch):
+    """Opt-in live GA4GH TES v1.1 status probe and dispatch test using environment variables.
+
+    Set AW_LIVE_TES_ENDPOINT and AW_LIVE_TES_TOKEN to execute against a real remote service.
+    """
+    import os
+
+    endpoint = os.environ.get("AW_LIVE_TES_ENDPOINT")
+    token = os.environ.get("AW_LIVE_TES_TOKEN", "")
+    if not endpoint:
+        pytest.skip("AW_LIVE_TES_ENDPOINT not set; skipping live TES service test")
+
+    from pangenome_town.compute.runner import TESComputeRunner
+
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token)
+    try:
+        service_info = await runner.poll_status("nonexistent-test-id")
+    except ComputeError as error:
+        assert "HTTP 404" in str(error)
+    else:
+        assert service_info in {"UNKNOWN", "SYSTEM_ERROR"}
+
+
+@pytest.mark.asyncio
+async def test_tes_local_http_endpoint_integration(towns, tmp_path):
+    """Real local HTTP TES test endpoint exercising submission, state transitions,
+
+    exact-task semantic gating, and receipt artifacts without mocks.
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from typing import Any
+
+    from pangenome_town.rcp import contract
+    from pangenome_town.tools import graph
+
+    town = towns["ubar"]
+    if not town.has_graph:
+        dummy_graph = tmp_path / "toy.gbz"
+        dummy_graph.write_bytes(b"dummy gbz content")
+        town = dataclasses.replace(town, graph=dummy_graph)
+
+    manifest = contract.render(town, tmp_path / "contract")
+
+    # Local in-memory stateful TES HTTP server
+    tasks_db: dict[str, dict[str, Any]] = {}
+    auth_token = "test-secret-token-12345"
+
+    class LocalTESHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass  # suppress console logs during test
+
+        def do_POST(self):
+            if self.path == "/v1/tasks":
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer {auth_token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                payload = json.loads(body.decode("utf-8"))
+
+                task_id = f"task-{len(tasks_db) + 1}"
+                # If outputs are declared, materialize them locally for file:// endpoints to simulate executor producing outputs
+                for out in payload.get("outputs", []):
+                    out_url = out.get("url", "")
+                    if out_url.startswith("file://"):
+                        out_file = Path(out_url.removeprefix("file://"))
+                        out_file.parent.mkdir(parents=True, exist_ok=True)
+                        out_file.write_bytes(b"dummy tes output bytes")
+
+                tasks_db[task_id] = {
+                    "id": task_id,
+                    "state": "QUEUED",
+                    "payload": payload,
+                    "poll_count": 0,
+                    "outputs": payload.get("outputs", []),
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"id": task_id}).encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_GET(self):
+            if self.path.startswith("/v1/tasks/"):
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer {auth_token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+
+                task_id = self.path.split("/v1/tasks/")[1]
+                if task_id in tasks_db:
+                    task_info = tasks_db[task_id]
+                    # Advance state transition on poll if state was initially QUEUED
+                    current_state = task_info.get("state")
+                    if isinstance(current_state, str) and current_state in {"QUEUED", "RUNNING"}:
+                        task_info["poll_count"] += 1
+                        if task_info["poll_count"] == 1:
+                            task_info["state"] = "RUNNING"
+                        elif task_info["poll_count"] >= 2:
+                            task_info["state"] = "COMPLETE"
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    response_data = {
+                        "id": task_id,
+                        "state": task_info["state"],
+                        "outputs": task_info["outputs"],
+                    }
+                    self.wfile.write(json.dumps(response_data).encode("utf-8"))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    server = HTTPServer(("127.0.0.1", 0), LocalTESHandler)
+    port = server.server_address[1]
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    endpoint = f"http://127.0.0.1:{port}"
+
+    try:
+        class EntailedReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                return "entailed"
+
+        gate = SemanticGate(manifest=manifest, reasoner=EntailedReasoner())
+        runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=gate)
+
+        tools = graph.GraphTools(town)
+        region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
+        tes_payload, rcp_task = tools.build_tes_chunk_task(
+            region,
+            manifest=manifest,
+            graph_url="https://example-bucket.org/toy.gbz",
+            output_url_prefix="https://example-bucket.org/outputs",
+        )
+
+        # 1. Negative test: Modified rcp_task causes digest mismatch, gate blocks submission before network call
+        tampered_rcp_task = dict(rcp_task)
+        tampered_rcp_task["partOfRequest"] = "urn:uuid:tampered-req-id"
+        initial_tasks_count = len(tasks_db)
+        with pytest.raises(SemanticPolicyError, match="TES dispatch digest mismatch"):
+            await runner.dispatch(tes_payload, rcp_task=tampered_rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1b. Negative test: Missing rcp_digest in tags fails closed before network call
+        payload_no_digest = json.loads(json.dumps(tes_payload))
+        payload_no_digest.get("tags", {}).pop("rcp_digest", None)
+        with pytest.raises(SemanticPolicyError, match="payload tags must contain 'rcp_digest'"):
+            await runner.dispatch(payload_no_digest, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1c. Negative test: Non-entailed semantic policy fails closed before network call
+        class ContradictedReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                return "contradicted"
+
+        contradicted_gate = SemanticGate(manifest=manifest, reasoner=ContradictedReasoner())
+        rejecting_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=contradicted_gate)
+        with pytest.raises(SemanticPolicyError, match="contradicted"):
+            await rejecting_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1d. Negative test: Unverified / missing manifest on gate fails closed before network call
+        no_manifest_gate = SemanticGate(reasoner=EntailedReasoner())
+        no_manifest_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=no_manifest_gate)
+        with pytest.raises(SemanticPolicyError, match="without a trusted contract manifest"):
+            await no_manifest_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1e. Negative test: Task declaring wrong contract manifest id or bundle digest fails closed
+        import hashlib
+
+        from pangenome_town.exchange import canonical
+
+        contract_mismatch_task = dict(rcp_task, semanticContract="https://w3id.org/attacker/fake-contract")
+        tampered_bytes = canonical(contract_mismatch_task)
+        if isinstance(tampered_bytes, str):
+            tampered_bytes = tampered_bytes.encode("utf-8")
+        tampered_digest = f"sha256:{hashlib.sha256(tampered_bytes).hexdigest()}"
+        mismatched_payload = dict(
+            tes_payload,
+            tags=dict(
+                tes_payload.get("tags", {}),
+                rcp_digest=tampered_digest,
+                rcp_source_jsonld=tampered_bytes.decode("utf-8"),
+            ),
+        )
+        with pytest.raises(SemanticPolicyError, match="does not match trusted manifest id"):
+            await runner.dispatch(mismatched_payload, rcp_task=contract_mismatch_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1f. Negative test: Reasoner crash converts to SemanticPolicyError fail-closed
+        class CrashingReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                raise RuntimeError("KM reasoner process killed")
+
+        crashing_gate = SemanticGate(manifest=manifest, reasoner=CrashingReasoner())
+        crashing_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=crashing_gate)
+        with pytest.raises(SemanticPolicyError, match="reasoner evaluate_gate error"):
+            await crashing_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1g. Negative test: Poll status receives non-string or malformed state without raising TypeError
+        tasks_db["task-malformed-state"] = {"id": "task-malformed-state", "state": {"nested": "dict"}, "poll_count": 0, "outputs": []}
+        state_malformed = await runner.poll_status("task-malformed-state")
+        assert state_malformed == ComputeState.UNKNOWN.value
+
+        # 2. Positive test: Exact-task pass gate, dispatch to real local HTTP TES endpoint
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert task_id in tasks_db
+        assert tasks_db[task_id]["state"] == "QUEUED"
+
+        # 3. State transitions via polling
+        state_1 = await runner.poll_status(task_id)
+        assert state_1 == ComputeState.RUNNING.value
+
+        state_2 = await runner.poll_status(task_id)
+        assert state_2 == ComputeState.COMPLETE.value
+
+        # 4. Check receipt artifacts
+        receipt = tasks_db[task_id]
+        assert receipt["id"] == task_id
+        assert receipt["payload"]["name"] == tes_payload["name"]
+        assert len(receipt["outputs"]) == 1
+        assert receipt["outputs"][0]["url"].endswith(".vg")
+
+        # 5. TESDriver.run test exercising driver-level path remapping, execution, and artifact retrieval
+        from pangenome_town.compute.sites import Site, TESDriver
+        from pangenome_town.compute.workflows import RenderedJob, Step
+
+        tes_site = Site(
+            name="tes_site",
+            driver="tes",
+            host=endpoint,
+            workdir="/tmp/tes-work",
+            token=auth_token,
+            output_url_prefix=f"file://{tmp_path.resolve()}",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+
+        driver = TESDriver(
+            tes_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix=f"file://{tmp_path.resolve()}",
+        )
+
+        job = RenderedJob(
+            workflow="region-extract",
+            steps=[
+                Step(id="step-1", argv=["vg", "chunk", "-x", "https://example.org/toy.gbz"], stdout="/tmp/work/123/out_chunk.vg")
+            ],
+            work_dir="/tmp/work/123",
+            outputs=[{"name": "out_chunk.vg", "path": str(tmp_path / "src_out_chunk.vg"), "class": "GraphSubgraphChunk", "release": False}],
+            resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
+        )
+
+        fetch_dir = tmp_path / "fetched"
+        res = driver.run(job, fetch_to=fetch_dir)
+        assert res.returncode == 0
+        assert "out_chunk.vg" in res.outputs
+        assert res.outputs["out_chunk.vg"].exists()
+
+        # 6. Negative test: TESDriver rejects non-loopback plaintext http output_prefix before dispatch
+        insecure_site = Site(
+            name="insecure_site",
+            driver="tes",
+            host=endpoint,
+            workdir="/tmp/tes-work",
+            token=auth_token,
+            output_url_prefix="http://remote.storage.org/outputs",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+        insecure_driver = TESDriver(
+            insecure_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix="http://remote.storage.org/outputs",
+        )
+        with pytest.raises(ComputeError, match="requires HTTPS unless allow_insecure_http is true"):
+            insecure_driver.run(job, fetch_to=fetch_dir)
+
+        # 7. Negative test: TES site with credentials in host URL rejected during load_sites
+        from pangenome_town.compute.sites import load_sites
+        bad_host_town = dataclasses.replace(
+            town,
+            extra={
+                "sites": [
+                    {
+                        "name": "credential_site",
+                        "driver": "tes",
+                        "host": "https://user:password@tes.example.com",
+                        "output_url_prefix": f"file://{tmp_path.resolve()}",
+                    }
+                ]
+            },
+        )
+        with pytest.raises(ComputeError, match="must not contain embedded user credentials"):
+            load_sites(bad_host_town)
+
+        # 8. Negative test: Output name with path traversal components rejected
+        traversal_job = RenderedJob(
+            workflow="region-extract",
+            steps=[
+                Step(id="step-1", argv=["vg", "chunk", "-x", "https://example.org/toy.gbz"], stdout="/tmp/work/123/out_chunk.vg")
+            ],
+            work_dir="/tmp/work/123",
+            outputs=[{"name": "../../evil.txt", "path": str(tmp_path / "evil.txt"), "class": "GraphSubgraphChunk", "release": False}],
+            resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
+        )
+        with pytest.raises(ComputeError, match="Invalid output name with path components"):
+            driver.run(traversal_job, fetch_to=fetch_dir)
+
+        # 9. Negative test: file:// output outside permitted root directories rejected
+        escaping_site = Site(
+            name="escaping_site",
+            driver="tes",
+            host=endpoint,
+            workdir="/tmp/tes-work",
+            token=auth_token,
+            output_url_prefix="file:///etc",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+        escaping_driver = TESDriver(
+            escaping_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix="file:///etc",
+        )
+        with pytest.raises(ComputeError, match="outside permitted directories"):
+            escaping_driver.run(job, fetch_to=fetch_dir)
+
+    finally:
+        server.shutdown()
+        server.server_close()
+

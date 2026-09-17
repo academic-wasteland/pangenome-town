@@ -13,6 +13,7 @@ assumed about files being shared between the gateway and the login node.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import resource
 import shlex
@@ -27,7 +28,7 @@ from typing import Any
 from ..config import TownConfig
 from . import ComputeError
 
-DRIVERS = ("local", "ssh")
+DRIVERS = ("local", "ssh", "tes")
 SCHEDULERS = ("none", "slurm")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
@@ -55,14 +56,30 @@ class Site:
     max_cpus: int = 4
     max_mem_gb: int = 16
     max_wall_seconds: int = 1800
+    token: str | None = None
+    output_url_prefix: str | None = None
+    allow_insecure_http: bool = False
 
     def iri(self, town_name: str) -> str:
         return f"https://w3id.org/academic-wasteland/{town_name}/sites/{self.name}"
 
     def as_dict(self) -> dict[str, Any]:
+        redacted_output_prefix = None
+        if self.output_url_prefix:
+            from urllib.parse import urlsplit, urlunsplit
+            parsed = urlsplit(self.output_url_prefix)
+            # Redact userinfo and query parameters from serialized provenance
+            netloc = parsed.hostname or ""
+            if parsed.port:
+                netloc = f"{netloc}:{parsed.port}"
+            redacted_output_prefix = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
         return {
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
             "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition, "storage": self.storage,
+            "output_url_prefix": redacted_output_prefix,
+            "allow_insecure_http": self.allow_insecure_http,
+            "token": "***" if self.token else None,
             "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
         }
@@ -113,8 +130,32 @@ def load_sites(town: TownConfig) -> list[Site]:
             raise ComputeError(f"site {name}: enabled must be true or false")
         host = entry.get("host")
         workdir = entry.get("workdir")
-        if host is not None and (not isinstance(host, str) or not HOST_RE.match(host)):
+        if host is not None and not isinstance(host, str):
+            raise ComputeError(f"site {name}: host must be a string")
+        allow_insecure = entry.get("allow_insecure_http")
+        if allow_insecure is not None and not isinstance(allow_insecure, bool):
+            raise ComputeError(f"site {name}: allow_insecure_http must be true or false")
+        if host is not None and driver != "tes" and not HOST_RE.match(host):
             raise ComputeError(f"site {name}: host {host!r} is not a plain SSH alias or hostname")
+        if driver == "tes":
+            if not host:
+                raise ComputeError(f"site {name}: TES driver needs a host URL")
+            if not host.startswith(("http://", "https://")):
+                raise ComputeError(f"site {name}: TES driver host must start with http:// or https://")
+            from urllib.parse import urlparse
+            parsed = urlparse(host)
+            if parsed.username or parsed.password:
+                raise ComputeError(f"site {name}: TES host URL must not contain embedded user credentials; configure token instead")
+            if parsed.query or parsed.fragment:
+                raise ComputeError(f"site {name}: TES host URL must not contain query parameters or fragments")
+            parsed_host = parsed.hostname or ""
+            if not parsed_host:
+                raise ComputeError(f"site {name}: TES host URL must specify a valid hostname")
+            is_loopback = parsed_host in {"localhost", "127.0.0.1", "::1"}
+            if not is_loopback and not host.startswith("https://") and allow_insecure is not True:
+                raise ComputeError(f"site {name}: remote TES endpoints require HTTPS unless allow_insecure_http is true")
+            if not workdir:
+                workdir = "/tmp/tes-work"
         submit_host = entry.get("submit_host")
         if submit_host is not None and (not isinstance(submit_host, str) or not HOST_RE.match(submit_host)):
             raise ComputeError(f"site {name}: submit_host {submit_host!r} is not a plain SSH alias or hostname")
@@ -142,6 +183,12 @@ def load_sites(town: TownConfig) -> list[Site]:
             for key, value in paths.items():
                 if not value.startswith("/") or ".." in value:
                     raise ComputeError(f"site {name}: path for {key} must be absolute on the remote host")
+        elif driver == "tes":
+            # Preserve raw URLs in paths for TES dataset mapping without resolving to local filesystem
+            remote_paths = {str(k): str(v) for k, v in (entry.get("paths") or {}).items()}
+            paths = remote_paths
+            if workdir is not None:
+                workdir = str(workdir)
         else:
             defaults = _default_paths(town)
             for key in datasets:
@@ -150,6 +197,8 @@ def load_sites(town: TownConfig) -> list[Site]:
             paths = {key: str(_local_path(town, value)) for key, value in paths.items()}
             if workdir is not None:
                 workdir = str(_local_path(town, workdir))
+        token = str(entry["token"]) if entry.get("token") else None
+        output_url_prefix = str(entry["output_url_prefix"]) if entry.get("output_url_prefix") else None
         sites.append(Site(
             name=name, driver=driver, enabled=enabled, host=host, workdir=workdir, scheduler=scheduler,
             submit_host=submit_host, partition=partition, storage=entry.get("storage"),
@@ -157,6 +206,9 @@ def load_sites(town: TownConfig) -> list[Site]:
             max_cpus=_positive_int(entry, "max_cpus", 4, name),
             max_mem_gb=_positive_int(entry, "max_mem_gb", 16, name),
             max_wall_seconds=_positive_int(entry, "max_wall_seconds", 1800, name),
+            token=token,
+            output_url_prefix=output_url_prefix,
+            allow_insecure_http=bool(allow_insecure),
         ))
     return sites
 
@@ -177,7 +229,8 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
     """Whether this town can use the site right now, with a human-readable reason."""
     if not site.enabled:
         return False, "disabled in town.toml"
-    key = (site.name, site.host, site.submit_host, site.driver, tuple(sorted(site.paths.items())), site.tools)
+    token_hash = hashlib.sha256(site.token.encode("utf-8")).hexdigest()[:16] if site.token else ""
+    key = (site.name, site.host, site.submit_host, site.driver, tuple(sorted(site.paths.items())), site.tools, token_hash)
     now = time.monotonic()
     cached = _REACHABILITY.get(key)
     if cached is not None and now - cached[0] < cache_seconds:
@@ -192,6 +245,23 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
         if missing_data:
             problems.append(f"datasets missing: {', '.join(missing_data)}")
         detail = "tools and datasets present" if ok else "; ".join(problems)
+    elif site.driver == "tes":
+        endpoint = (site.host or "").rstrip("/")
+        if not endpoint:
+            ok, detail = False, "TES host URL not set"
+        else:
+            try:
+                import httpx
+
+                headers = {}
+                if site.token:
+                    headers["Authorization"] = f"Bearer {site.token}"
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(f"{endpoint}/service-info", headers=headers)
+                    ok = resp.status_code == 200
+                    detail = f"TES endpoint reachable ({resp.status_code})" if ok else f"TES endpoint returned {resp.status_code}"
+            except Exception as error:  # noqa: BLE001
+                ok, detail = False, f"TES endpoint unreachable: {error}"
     else:
         argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", str(site.host)]
         argv.append(shlex.join(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", site.submit_host, "true"]) if site.submit_host else "true")
@@ -427,7 +497,332 @@ def _hms(seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def driver_for(site: Site, **options: Any) -> LocalDriver | SshDriver:
+def driver_for(site: Site, **options: Any) -> LocalDriver | SshDriver | TESDriver:
     if site.driver == "local":
         return LocalDriver()
+    if site.driver == "tes":
+        return TESDriver(site, **options)
     return SshDriver(site, **options)
+
+
+class TESDriver:
+    """Dispatches a rendered job to a remote GA4GH TES endpoint."""
+
+    def __init__(self, site: Site, **options: Any) -> None:
+        self.site = site
+        self.options = options
+
+    def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
+        import asyncio
+        import shutil
+        import uuid
+
+        from .runner import TESComputeRunner
+        from .tes_schema import build_tes_task
+
+        gate = self.options.get("gate")
+        if gate is None:
+            raise ComputeError(f"site {self.site.name}: TES driver requires a verified manifest-backed SemanticGate")
+
+        rcp_task = self.options.get("rcp_task")
+        if rcp_task is None:
+            raise ComputeError(f"site {self.site.name}: TES driver requires an original, verified RCP task document")
+
+        if not self.site.host:
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit host URL")
+
+        runner = TESComputeRunner(
+            endpoint_url=self.site.host,
+            bearer_token=self.site.token or "",
+            gate=gate,
+            allow_insecure_http=bool(self.site.allow_insecure_http or self.options.get("allow_insecure_http")),
+        )
+
+        output_prefix = (
+            self.site.output_url_prefix
+            or self.options.get("output_url_prefix")
+        )
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S) or file:// output storage URL (output_url_prefix); object-store protocols like s3:// must be fetched via HTTP(S) gateways")
+        if output_prefix.startswith("http://"):
+            from urllib.parse import urlparse
+            output_host = urlparse(output_prefix).hostname or ""
+            if output_host not in {"localhost", "127.0.0.1", "::1"} and not (
+                self.site.allow_insecure_http or self.options.get("allow_insecure_http")
+            ):
+                raise ComputeError(f"TES output destination '{output_prefix}' requires HTTPS unless allow_insecure_http is true")
+        if output_prefix.startswith("file://"):
+            local_dest = Path(output_prefix.removeprefix("file://")).resolve()
+            allowed_roots = [fetch_to.resolve(), Path("/tmp").resolve()]
+            if self.site.workdir:
+                allowed_roots.append(Path(self.site.workdir).resolve())
+            if not any(local_dest.is_relative_to(root) for root in allowed_roots):
+                raise ComputeError(f"file:// output destination {local_dest} is outside permitted directories")
+
+        default_image = "quay.io/biocontainers/bcftools:1.21--h8b25389_0" if job.workflow in {"genotype-export", "allele-frequency"} else "quay.io/vgteam/vg:v1.64.1"
+        image = self.options.get("image", default_image)
+
+        # Map inputs from job and datasets to declared container paths
+        container_input_dir = "/container/input"
+        container_work_dir = "/container/work"
+        container_output_dir = "/container/output"
+
+        # Build logical-to-container path mapping and storage map
+        dataset_storage_map = {}
+        path_replacements = {}
+        if job.work_dir:
+            path_replacements[job.work_dir] = container_work_dir
+
+        used_input_names: dict[str, str] = {}
+        def _allocate_container_input_path(src: str) -> str:
+            clean = src.split("?", 1)[0].split("#", 1)[0]
+            base_name = Path(clean).name or "input.dat"
+            if base_name in used_input_names and used_input_names[base_name] != src:
+                import hashlib
+                token = hashlib.sha256(src.encode("utf-8")).hexdigest()[:8]
+                stem = Path(base_name).stem
+                suffix = Path(base_name).suffix
+                base_name = f"{stem}_{token}{suffix}"
+            used_input_names[base_name] = src
+            return f"{container_input_dir}/{base_name}"
+
+        for k, v in self.site.paths.items():
+            dataset_storage_map[k] = v
+            input_container_path = _allocate_container_input_path(v)
+            path_replacements[v] = input_container_path
+
+        if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
+            for ds in rcp_task["usesDataset"]:
+                if isinstance(ds, dict) and ds.get("@id"):
+                    ds_id = ds["@id"]
+                    if ds.get("url"):
+                        dataset_storage_map[ds_id] = ds["url"]
+                        path_replacements[ds["url"]] = _allocate_container_input_path(ds["url"])
+                    elif ds_id in self.site.paths:
+                        dataset_storage_map[ds_id] = self.site.paths[ds_id]
+                    else:
+                        # Use the RCP type to choose the logical storage key.
+                        types = ds.get("@type", [])
+                        types = [types] if isinstance(types, str) else types
+                        candidate_key = "vcf" if any(str(value).endswith(("RestrictedDataset", "IndividualGenotypeData")) for value in types) else "graph"
+                        if candidate_key in self.site.paths:
+                            dataset_storage_map[ds_id] = self.site.paths[candidate_key]
+                elif isinstance(ds, str) and ds:
+                    ds_id = ds
+                    if ds_id in self.site.paths:
+                        dataset_storage_map[ds_id] = self.site.paths[ds_id]
+                    elif ds.startswith(("http://", "https://", "s3://", "file://", "/")):
+                        dataset_storage_map[ds_id] = ds
+                        path_replacements[ds] = _allocate_container_input_path(ds)
+                    else:
+                        candidate_key = "vcf" if any(k in ds.lower() for k in ("vcf", "restricted", "individual")) else "graph"
+                        if candidate_key in self.site.paths:
+                            dataset_storage_map[ds_id] = self.site.paths[candidate_key]
+
+        # Map steps with stdout handling and translate paths to container mount paths
+        # If the job has a single step and no complex output copy logic, use native command vectors directly;
+        # otherwise compose discrete shell execution safely.
+        commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
+        single_direct_step = None
+        fetched = _fetched_outputs(job)
+
+        if len(job.steps) == 1 and not fetched:
+            # Single step without intermediate workdir-to-output copies can run natively
+            step = job.steps[0]
+            remapped_argv = []
+            for arg in step.argv:
+                remapped_arg = arg
+                for src_p, dst_p in path_replacements.items():
+                    if remapped_arg == src_p:
+                        remapped_arg = dst_p
+                    elif remapped_arg.startswith(src_p.rstrip("/") + "/"):
+                        remapped_arg = dst_p.rstrip("/") + "/" + remapped_arg[len(src_p.rstrip("/") + "/"):]
+                remapped_argv.append(remapped_arg)
+            if not step.stdout:
+                single_direct_step = remapped_argv
+
+        for step in job.steps:
+            remapped_argv = []
+            for arg in step.argv:
+                remapped_arg = arg
+                for src_p, dst_p in path_replacements.items():
+                    if remapped_arg == src_p:
+                        remapped_arg = dst_p
+                    elif remapped_arg.startswith(src_p.rstrip("/") + "/"):
+                        remapped_arg = dst_p.rstrip("/") + "/" + remapped_arg[len(src_p.rstrip("/") + "/"):]
+                remapped_argv.append(remapped_arg)
+            cmd = " ".join(shlex.quote(arg) for arg in remapped_argv)
+            if step.stdout:
+                stdout_path = step.stdout
+                for src_p, dst_p in path_replacements.items():
+                    if stdout_path == src_p:
+                        stdout_path = dst_p
+                    elif stdout_path.startswith(src_p.rstrip("/") + "/"):
+                        stdout_path = dst_p.rstrip("/") + "/" + stdout_path[len(src_p.rstrip("/") + "/"):]
+                cmd += f" > {shlex.quote(stdout_path)}"
+            commands.append(cmd)
+
+        # Ensure container output directory exists and copy outputs from /container/work to /container/output if needed
+        if fetched:
+            copy_cmds = [f"mkdir -p {container_output_dir}"]
+            for out in fetched:
+                out_name = Path(out["name"]).name
+                copy_cmds.append(f"if [ -f {container_work_dir}/{shlex.quote(out_name)} ]; then cp {container_work_dir}/{shlex.quote(out_name)} {container_output_dir}/{shlex.quote(out_name)}; fi")
+            commands.append(" && ".join(copy_cmds))
+
+        combined_command = single_direct_step if single_direct_step is not None else ["sh", "-c", " && ".join(commands)]
+
+        # Populate TES outputs from job.outputs with unique task namespace
+        run_uuid = uuid.uuid4().hex[:12]
+        output_dest_prefix = f"{output_prefix.rstrip('/')}/{run_uuid}"
+
+        tes_outputs = []
+        for out in fetched:
+            out_name = out["name"]
+            out_path = f"{container_output_dir}/{out_name}"
+            out_url = f"{output_dest_prefix}/{out_name}"
+            tes_outputs.append({
+                "name": out_name,
+                "path": out_path,
+                "url": out_url,
+            })
+
+        tes_payload = build_tes_task(
+            rcp_task,
+            executor_image=image,
+            command=combined_command,
+            output_url_prefix=output_prefix,
+            dataset_storage_map=dataset_storage_map,
+            outputs=tes_outputs,
+            resources=job.resources,
+        )
+
+        wall_time = job.resources.get("wall_seconds", self.site.max_wall_seconds)
+        max_attempts = max(10, int(wall_time / 1.5))
+
+        async def _run() -> str:
+            task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+            if hasattr(self, "on_dispatched") and callable(self.on_dispatched):
+                self.on_dispatched()
+            # Poll with adaptive backoff derived from wall time and consecutive checks
+            attempts = 0
+            current_delay = 1.0
+            unknown_grace_count = 0
+            while attempts < max_attempts:
+                attempts += 1
+                status = await runner.poll_status(task_id)
+                if status == "UNKNOWN":
+                    # Allow transient UNKNOWN (e.g. initial replica lag) up to 3 times
+                    unknown_grace_count += 1
+                    if unknown_grace_count > 3:
+                        raise ComputeError(f"TES execution failed with state: {status}")
+                elif status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED"}:
+                    if status != "COMPLETE":
+                        raise ComputeError(f"TES execution failed with state: {status}")
+                    break
+                else:
+                    unknown_grace_count = 0
+
+                await asyncio.sleep(current_delay)
+                # Adaptive backoff: ramp from 1.0s to a maximum of 8.0s
+                current_delay = min(8.0, current_delay * 1.5)
+            else:
+                try:
+                    await runner.cancel(task_id)
+                except ComputeError:
+                    pass
+                raise ComputeError(f"TES execution timed out polling task {task_id}")
+            return task_id
+
+        started_time = time.monotonic()
+        async def _execute_and_close() -> str:
+            try:
+                return await _run()
+            finally:
+                await runner.aclose()
+
+        try:
+            import concurrent.futures
+            # If an event loop is already running in this thread, execute in a separate worker thread
+            has_running_loop = False
+            try:
+                loop = asyncio.get_running_loop()
+                has_running_loop = loop.is_running()
+            except RuntimeError:
+                has_running_loop = False
+
+            if has_running_loop:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    task_id = pool.submit(asyncio.run, _execute_and_close()).result()
+            else:
+                task_id = asyncio.run(_execute_and_close())
+        except Exception as exc:
+            if isinstance(exc, ComputeError):
+                raise
+            raise ComputeError(f"TES execution error: {exc}") from exc
+        elapsed_seconds = round(time.monotonic() - started_time, 3)
+
+        # Ensure declared outputs exist in fetch_to
+        fetch_to.mkdir(parents=True, exist_ok=True)
+        resolved_fetch_to = fetch_to.resolve()
+        outputs: dict[str, Path] = {}
+        for output in _fetched_outputs(job):
+            # Guard against directory traversal attacks via output name
+            safe_name = Path(output["name"]).name
+            if safe_name != output["name"]:
+                raise ComputeError(f"Invalid output name with path components: {output['name']!r}")
+            target = (fetch_to / safe_name).resolve()
+            if not target.is_relative_to(resolved_fetch_to):
+                raise ComputeError(f"Output target path {target} escapes destination directory {fetch_to}")
+
+            if not target.exists():
+                src_path = Path(output["path"])
+                if self.site.driver == "local" and src_path.exists():
+                    shutil.copy2(src_path, target)
+                else:
+                    # Download remote output URL if available
+                    out_url = f"{output_dest_prefix}/{safe_name}"
+                    if out_url.startswith("file://"):
+                        local_src = Path(out_url.removeprefix("file://")).resolve()
+                        # Strict jail: file:// outputs must reside under allowed state/work directories
+                        allowed_roots = [fetch_to.resolve(), Path("/tmp").resolve()]
+                        if self.site.workdir:
+                            allowed_roots.append(Path(self.site.workdir).resolve())
+                        if not any(local_src.is_relative_to(root) for root in allowed_roots):
+                            raise ComputeError(f"file:// output destination {local_src} is outside permitted directories")
+                        if local_src.exists():
+                            shutil.copy2(local_src, target)
+                        else:
+                            raise ComputeError(f"TES output {safe_name} was not produced at {local_src}")
+                    elif out_url.startswith(("http://", "https://")):
+                        try:
+                            from urllib.parse import urlparse
+
+                            import httpx
+
+                            out_parsed = urlparse(out_url)
+                            out_loopback = (out_parsed.hostname or "") in {"localhost", "127.0.0.1", "::1"}
+                            allow_insecure = bool(self.site.allow_insecure_http or self.options.get("allow_insecure_http"))
+                            if not out_loopback and out_parsed.scheme != "https" and not allow_insecure:
+                                raise ComputeError(f"TES output download URL '{out_url}' requires HTTPS unless allow_insecure_http is true")
+
+                            headers = {}
+                            # Only attach TES bearer token if output destination is same-origin
+                            if self.site.token and self.site.host:
+                                site_parsed = urlparse(self.site.host)
+                                if (site_parsed.scheme, site_parsed.netloc) == (out_parsed.scheme, out_parsed.netloc):
+                                    headers["Authorization"] = f"Bearer {self.site.token}"
+
+                            with httpx.Client(timeout=30.0) as client:
+                                resp = client.get(out_url, headers=headers)
+                                resp.raise_for_status()
+                                target.write_bytes(resp.content)
+                        except Exception as dl_err:
+                            if isinstance(dl_err, ComputeError):
+                                raise
+                            raise ComputeError(f"Failed to download TES output from {out_url}: {dl_err}") from dl_err
+                    else:
+                        raise ComputeError(f"TES output {output['name']} was not produced or fetched into {target}")
+            outputs[output["name"]] = target
+
+        return JobResult(0, outputs, elapsed_seconds, task_id, [])

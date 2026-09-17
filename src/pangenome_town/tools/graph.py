@@ -132,6 +132,9 @@ def _sample_of(path_name: str) -> str:
     return path_name.split("#", 1)[0]
 
 
+VG_IMAGE_DEFAULT = "quay.io/vgteam/vg:v1.64.1"
+
+
 class GraphTools:
     def __init__(self, town: TownConfig):
         self.town = town
@@ -145,6 +148,122 @@ class GraphTools:
         if not self.town.has_vcf:
             raise QueryError(f"VCF not present at {self.town.vcf}")
         return self.town.vcf  # type: ignore[return-value]
+
+    def build_tes_chunk_task(
+        self,
+        region: Region,
+        executor_image: str = VG_IMAGE_DEFAULT,
+        container_graph_path: str = "/container/input/graph.gbz",
+        graph_url: str | None = None,
+        output_url_prefix: str | None = None,
+        manifest: Any = None,
+        requester: str | None = None,
+        request_id: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build a GA4GH TES v1.1 task definition and matching RCP task for a vg chunk operation.
+
+        Returns (tes_task_payload, rcp_task).
+
+        - vg chunk writes single-region extraction to stdout; executor stdout is directed to
+          /container/output/{stem}.vg.
+        - Requires a service-reachable graph_url (e.g. s3:// or https://) for distributed TES tasks.
+        - Outputs contain compliant URLs using output_url_prefix.
+        - The RCP task populates standard RCP fields (taskType, requestedBy, partOfRequest, usesDataset,
+          semanticContract, ontologyProfile).
+        """
+        import uuid
+
+        from ..compute.tes_schema import build_tes_task
+        from ..rcp import contract
+
+        if not graph_url:
+            raise ValueError(
+                "A service-reachable graph_url (e.g. s3:// or https://) is required for distributed TES tasks"
+            )
+
+        if not output_url_prefix or not output_url_prefix.startswith(("http://", "https://", "file://")):
+            raise ValueError(
+                "An output_url_prefix (http://, https://, or file://) is required for remote TES outputs; object-store protocols like s3:// must be accessed via HTTP(S) gateways"
+            )
+
+        path_name = self.town.reference_path(region.assembly, region.chrom)
+        stem = f"chunk_{region.chrom}_{region.start}_{region.end}"
+        output_path = f"/container/output/{stem}.vg"
+        command = [
+            "vg",
+            "chunk",
+            "-x",
+            container_graph_path,
+            "-p",
+            f"{path_name}:{region.start}-{max(region.end - 1, region.start)}",
+            "-c",
+            "0",
+        ]
+
+        # Resolve manifest for semanticContract and ontologyProfile if available
+        if manifest is not None:
+            contract_id = getattr(manifest, "id", None)
+            bundle_digest = getattr(manifest, "bundle_digest", None)
+        else:
+            manifest_path = self.town.city_root / "contract" / f"{self.town.name}.contract.json"
+            if not manifest_path.is_file():
+                raise ValueError(f"trusted contract manifest not found at {manifest_path}")
+            loaded_manifest = contract.ContractManifest.load(manifest_path)
+            contract_id = loaded_manifest.id
+            bundle_digest = loaded_manifest.bundle_digest
+
+        task_uuid = f"urn:uuid:{uuid.uuid4()}"
+        uuid_token = task_uuid.split(":")[-1][:12]
+        resolved_requester = requester or f"https://w3id.org/academic-wasteland/{self.town.name}/agents/townsfolk"
+        resolved_request_id = request_id or f"urn:uuid:{uuid.uuid4()}"
+        graph_id = contract.graph_iri(self.town)
+
+        from research_commons.constants import CONTEXT_IRI
+
+        from ..rcp import iri
+
+        rcp_task: dict[str, Any] = {
+            "@context": CONTEXT_IRI,
+            "@id": task_uuid,
+            "@type": ["ResearchTask", f"{contract.PG}RegionExtractionTask"],
+            "taskType": f"{contract.PG}RegionExtractionTask",
+            "requestedBy": {"@id": resolved_requester, "@type": "Agent"},
+            "partOfRequest": resolved_request_id,
+            "usesDataset": [
+                {
+                    "@id": graph_id,
+                    "@type": ["PublicDataset", f"{contract.PG}PangenomeGraph"],
+                    "name": f"{self.town.display} served graph",
+                },
+                iri.region_iri(self.town.name, region).entity(),
+            ],
+        }
+        if contract_id:
+            rcp_task["semanticContract"] = contract_id
+        if bundle_digest:
+            rcp_task["ontologyProfile"] = bundle_digest
+
+        tes_payload = build_tes_task(
+            rcp_task,
+            executor_image=executor_image,
+            command=command,
+            output_url_prefix=output_url_prefix,
+            stdout=output_path,
+            dataset_storage_map={graph_id: graph_url},
+            inputs=[
+                {
+                    "url": graph_url,
+                    "path": container_graph_path,
+                }
+            ],
+            outputs=[
+                {
+                    "path": output_path,
+                    "url": f"{output_url_prefix.rstrip('/')}/{uuid_token}/{stem}.vg",
+                }
+            ],
+        )
+        return tes_payload, rcp_task
 
     def summary(self, *, refresh: bool = False) -> dict[str, Any]:
         """Whole-graph statistics. Slow on a full human pangenome (minutes), so cached per graph fingerprint."""
