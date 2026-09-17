@@ -52,7 +52,7 @@ def test_service_resolves_before_scoring(settings, monkeypatch):
     seen = []
     def learned(config, query):
         seen.append(query)
-        return {'ok': True, 'results': [{'gene': 'MGI:1', 'score': .6}]}
+        return {'ok': True, 'candidate_count': 1, 'results': [{'gene': 'MGI:1', 'score': .6}]}
     monkeypatch.setattr('pangenome_town.indigena.search', learned)
     town = SimpleNamespace(extra={'phenotype_search': dict(settings, enabled=True, backend='indigena', model='fixture')})
     result = search(town, {'phenotypes': ['Lens dislocation']})

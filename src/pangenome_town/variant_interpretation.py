@@ -83,10 +83,16 @@ def report_pdf(report):
     return output.getvalue()
 
 
+def request_text(variant, phenotypes):
+    return (f"Please assess {variant['assembly']} {variant['chrom']}:{variant['pos']} {variant['ref']}>{variant['alt']} "
+            f"with phenotype identifiers {', '.join(phenotypes)}. Apply the available ACMG evidence and return a sourced PDF report. "
+            "I am sending only this allele and phenotype terms; the VCF remains at Yamatai.")
+
+
 def interpret(town, body):
     if not town.extra.get('variant_interpretation', {}).get('enabled'):
         raise ValueError('Variant interpretation is not enabled in this town')
-    if set(body) - {'operation', 'text', 'resident', 'variant', 'phenotypes'} or body.get('text'):
+    if set(body) - {'operation', 'text', 'resident', 'variant', 'phenotypes'}:
         raise ValueError('Themis accepts only one variant and phenotype identifiers; no VCF or patient metadata')
     if body.get('resident', 'themis') != 'themis':
         raise ValueError('The variant interpretation resident is themis')
@@ -102,6 +108,8 @@ def interpret(town, body):
     if not isinstance(phenotypes, list) or not 1 <= len(phenotypes) <= 30 or any(
             not isinstance(p, str) or not re.fullmatch(r'(HP|MP):\d{7}', p) for p in phenotypes):
         raise ValueError('Provide 1–30 resolved HPO/MP phenotype identifiers')
+    if body.get('text') not in (None, '', request_text(variant, phenotypes)):
+        raise ValueError('Themis accepts only one variant and phenotype identifiers; use the bounded request text without patient metadata')
     from .phenotype_labels import resolve
     _, resolution = resolve(town.extra.get('phenotype_search', {}), phenotypes)
     raw = EVIDENCE.read_bytes()
@@ -126,5 +134,6 @@ def interpret(town, body):
                                'Downloaded expert JSON SHA-256': evidence['source_sha256']})
         report['not_applied'].append('PM1 is excluded by the expert panel for this substitution. PP5 is not used.')
     pdf = report_pdf(report)
-    return {'ok': True, 'report': report, 'pdf_base64': base64.b64encode(pdf).decode(),
+    return {'ok': True, 'resident': 'themis',
+            'text': f"My assessment is {report['classification']}. The attached report shows the dated public evidence, applied ACMG criteria and exclusions. I received only one allele and phenotype terms, not the VCF or genotype. This is a research assessment without clinical sign-off.", 'report': report, 'pdf_base64': base64.b64encode(pdf).decode(),
             'pdf_sha256': hashlib.sha256(pdf).hexdigest(), 'pdf_media_type': 'application/pdf'}

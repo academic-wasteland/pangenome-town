@@ -194,7 +194,7 @@ def handler(visitors):
                         or self.headers.get_content_type() != 'application/json'):
                     return self.send(413, {'error': 'Expected JSON under 64 KiB.'})
                 payload = json.loads(self.rfile.read(length))
-                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf', 'phenotypes', 'private_case'}:
+                if not isinstance(payload, dict) or set(payload) - {'run_id', 'vcf', 'phenotypes', 'private_case', 'human_message'}:
                     raise StageError('Only the fixed demo inputs are accepted.')
                 self.send(200, visitors.act(session, parts[1], parts[2], payload))
             except (StageError, ValueError) as error:

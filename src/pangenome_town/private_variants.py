@@ -51,7 +51,12 @@ def rank(town, sender, body):
                          'gene': annotation['gene'], 'gene_rank': position, 'gene_priority': priority,
                          'af': annotation['af'], 'revel': annotation['revel'], 'score': score,
                          'annotation_provenance': annotation['provenance']})
+    revel_order = sorted(retained, key=lambda r: (-r['revel'], r['gene'], r['variant']['pos']))
+    for position, row in enumerate(revel_order, 1):
+        row['revel_rank'] = position
     retained.sort(key=lambda r: (-r['score'], r['gene'], r['variant']['pos']))
+    for position, row in enumerate(retained, 1):
+        row['combined_rank'] = position
     return {'ok': True, 'owner': town.name, 'synthetic': True, 'input_count': len(retained)+len(excluded),
             'vcf_sha256': hashlib.sha256(raw).hexdigest(), 'retained': retained, 'excluded': excluded,
             'method': 'PASS; DP>=10; GQ>=20; heterozygous; AF<=0.001; gene in INDIGENA top list. Score = 0.45/(1+log2(gene rank)) + 0.55*REVEL.',

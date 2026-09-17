@@ -52,6 +52,8 @@ def search(town, body):
             if not settings.get('orthologues'):
                 raise ValueError('human orthologue mapping is not installed')
             result = annotate(result, settings['orthologues'])
+        result['text'] = f"I resolved your phenotype query and ranked {result['candidate_count']} mouse gene profiles with INDIGENA. Here are {len(result['results'])} candidates, with human orthologue annotations when requested. Use these as research priorities; the scores are not diagnostic probabilities."
+        result['resident'] = 'phenomancer'
         result['resolution'] = resolution
         return result
     root = Path(settings['data']).expanduser().resolve()

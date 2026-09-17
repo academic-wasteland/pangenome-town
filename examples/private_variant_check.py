@@ -22,6 +22,14 @@ def main():
     assert run['benchmark']['rank'] == 3
     assert run['variant_benchmark']['recovered'] is True
     assert run['variants']['retained'][0]['gene_rank'] == 3
+    assert run['variants']['retained'][0]['revel_rank'] == 2
+    assert run['variants']['retained'][0]['combined_rank'] == 1
+    sent = [e for e in run['events'] if e['detail'].get('message_type') == 'sent']
+    assert [e['title'] for e in sent] == ['message', 'phenotype-search', 'variant-interpretation']
+    assert sent[0]['text'] == run['human_message']
+    assert all(e['text'] == e['detail']['wire_body']['text'] for e in sent)
+    replies = [e for e in run['events'] if e['detail'].get('message_type') == 'received']
+    assert all(e['text'] == e['detail']['body']['text'] for e in replies)
     assert run['interpretation']['classification'] == 'Likely pathogenic'
     payloads = [e['detail']['body'] for e in run['events'] if e['title'] == 'variant-interpretation']
     assert len(payloads) == 1 and set(payloads[0]) == {'resident', 'variant', 'phenotypes'}
@@ -30,7 +38,8 @@ def main():
     if args.pdf:
         args.pdf.write_bytes(pdf)
     print('PASS: live INDIGENA FBN1 gene rank 3 / 1529.')
-    print('PASS: six local synthetic VCF calls; four retained; expected FBN1 allele at variant rank 1.')
+    print('PASS: FBN1 rank 2 by REVEL alone; rank 3 by phenotype; rank 1 only after combining both.')
+    print('PASS: actual human request, contact delegation, Phenomancer and Themis text messages with structured payloads.')
     print('PASS: Ubar interpretation receives only selected allele, phenotype identifiers and resident routing.')
     print('PASS: PS4 + PM2_Supporting + PP2 + PP3 -> Likely pathogenic; no PP4 or fabricated patient evidence.')
     print('PASS: Ubar-generated PDF received and SHA-256 verified.')

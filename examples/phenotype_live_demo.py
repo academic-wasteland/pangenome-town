@@ -57,6 +57,17 @@ def main():
             assert run['benchmark']['gene'] == 'FBN1' and 1 <= run['benchmark']['rank'] <= 5
             assert len(run['result']['resolution']['terms']) == 3
             assert run['variant_benchmark']['recovered'] is True
+            assert run['variant_benchmark']['revel_rank'] == 2
+            browser('assert', 'document.querySelector("#variant-truth").textContent.includes("REVEL-only rank 2")')
+            browser('js', '(()=>{document.querySelector("#variant-order").value="revel_rank";document.querySelector("#variant-order").dispatchEvent(new Event("change"));return true})()')
+            browser('assert', 'document.querySelector("#variant-rows tr").dataset.gene==="ADAMTSL4"')
+            browser('js', '(()=>{document.querySelector("#variant-order").value="combined_rank";document.querySelector("#variant-order").dispatchEvent(new Event("change"));return true})()')
+            browser('assert', 'document.querySelector("#variant-rows tr").dataset.gene==="FBN1"')
+            messages=[e for e in run['events'] if e['detail'].get('message_type')]
+            assert len(messages)==6
+            assert messages[0]['text']==run['human_message']
+            assert all(e['text']==e['detail']['body']['text'] for e in messages if e['detail']['message_type']=='received')
+            browser('assert', 'document.querySelectorAll("#feed .message").length===6')
             assert run['variants']['retained'][0]['gene'] == 'FBN1'
             assert run['interpretation']['classification'] == 'Likely pathogenic'
             assert {c['code'] for c in run['interpretation']['criteria'] if c['met']} == {'PS4', 'PM2_Supporting', 'PP2', 'PP3'}
@@ -83,11 +94,15 @@ def main():
             # Manual execution and a second edited query must work without narration or reset.
             browser('open', args.url)
             browser('wait', '#run')
+            browser('js', 'document.querySelector("#human-message").value="Please delegate this synthetic Marfan investigation. Keep the VCF at Yamatai and compare REVEL alone with phenotype-informed ranking."')
             browser('js', 'document.querySelector("#terms").value="HPO: Ectopia lentis; HPO: Arachnodactyly; HPO: Aortic root aneurysm"')
             browser('click', '#run')
             wait('document.querySelectorAll("#rows tr").length===20 && !document.querySelector("#run").disabled')
             manual = json.loads(browser('js', api('demo-phenotypes')))
             assert manual['benchmark']['rank'] <= 5
+            assert manual['human_message'].startswith('Please delegate this synthetic Marfan investigation.')
+            intake_message=next(e for e in manual['events'] if e['title']=='message' and e['detail'].get('message_type')=='sent')
+            assert intake_message['text']==manual['human_message']==intake_message['detail']['wire_body']['text']
             assert manual['result']['query']['phenotypes'] == ['HP:0001083', 'HP:0001166', 'HP:0002616']
             browser('assert', 'document.querySelector("audio").currentTime===0 && !document.querySelector("audio").getAttribute("src")')
             browser('js', 'document.querySelector("#private-case").checked=false')

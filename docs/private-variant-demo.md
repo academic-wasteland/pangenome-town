@@ -13,25 +13,37 @@ ranking. It is never passed as a target to either ranking algorithm.
 
 ## What runs, and where
 
-1. Yamatai sends phenotype labels to Ubar's `phenotype-search` operation. No VCF,
-   genotype, sample name or variant is in this first request.
-2. Ubar resolves HPO/MP labels, runs the installed INDIGENA model, and returns
+1. Human writes a request to Ubar/contact, relayed with Yamatai’s authenticated
+   identity. `message` with `resident: contact` and `workflow: phenotype-research` returns actual reply text and an ordered structured
+   delegation plan. The coordinator validates the bounded plan, then follows it.
+   This contact service selects its plan from the structured workflow fields;
+   it does not claim unrestricted natural-language reasoning.
+2. Yamatai sends phenotype labels to Ubar's `phenotype-search` operation. No VCF,
+   genotype, sample name or variant is in this phenotype-search request.
+3. Ubar resolves HPO/MP labels, runs the installed INDIGENA model, and returns
    scored mouse genes with human orthologues.
-3. Yamatai passes the ranked symbols to its local `private-variant-rank` task.
+4. Yamatai passes the ranked symbols to its local `private-variant-rank` task.
    This task has no relay endpoint and checks its owning-town context. It opens a
    fixed local synthetic VCF, applies quality/heterozygosity/population-frequency
    screening and ranks the retained calls. The web display is the Yamatai view;
    its shortlist is not sent to Ubar.
-4. Yamatai sends only the highest-ranking allele (GRCh38 chromosome, position,
+5. Yamatai sends only the highest-ranking allele (GRCh38 chromosome, position,
    REF, ALT) and resolved phenotype identifiers to Ubar's new resident **Themis**,
    through `variant-interpretation`. No genotype, pedigree or other alleles are
    supplied. An allele and phenotypes are a disclosure, not anonymization.
-5. Themis evaluates the installed public evidence and generates a PDF at Ubar.
+6. Themis evaluates the installed public evidence and generates a PDF at Ubar.
    Yamatai verifies the PDF SHA-256; its visitor can inspect and download it.
 
-Every request and response ID is inspectable in the event stream. Raw VCF text,
-sample identifiers, genotypes and read-depth values never enter relay messages
-or public run snapshots. The operation refuses paths/uploads and any VCF that
+Highlighted conversation entries display the text actually sent in relay
+requests and returned in service replies. Expand them to inspect data payloads
+and transport identifiers. Local execution notes are labelled separately;
+PDF bytes are omitted from the event view but available through the download.
+Themis’s bounded request text repeats only the selected allele, phenotype terms
+and requested action; arbitrary patient narrative remains rejected.
+Every request and response ID is inspectable in the event stream. The automated workflow never adds raw VCF text, sample identifiers, genotypes
+or read-depth values to relay messages or public run snapshots. The editable
+human-message field is sent verbatim; it is not a redaction service. Use only
+the synthetic case and do not put patient data in that field. The operation refuses paths/uploads and any VCF that
 differs from the synthetic teaching fixture. Towns currently share a host/user:
 this demonstrates protocol-level minimization, not OS-level isolation against a
 malicious local administrator. The reproducible synthetic fixture is public in
@@ -51,7 +63,14 @@ score = 0.45 / (1 + log2(INDIGENA gene rank)) + 0.55 * REVEL
 This is an explicit illustrative heuristic, not a trained or clinically validated
 variant classifier. The AF screen is not the ACMG PM2 threshold. The top call is
 **GRCh38 15:48421680 T>C**, **FBN1 NM_000138.5:c.7577A>G (p.Asn2526Ser)**.
-It moves from gene rank 3 to variant rank 1, score approximately **0.6256**.
+The FBN1 allele is **rank 2 by REVEL alone** (0.821 versus the synthetic
+ADAMTSL4 decoy’s 0.86), **gene rank 3 by phenotype alone**, and **rank 1 after
+combining them**, score approximately **0.6256**. ADAMTSL4 has poorer phenotype
+support (gene rank 5) and combined score approximately **0.6085**. The scoring
+formula and FBN1’s published score were not changed; the decoy is explicitly
+synthetic. A counterfactual test exchanges the genes’ phenotype ranks and
+confirms that ADAMTSL4 then wins. The UI can sort by either component or their
+combination, displaying all ranks alongside the scores.
 
 The target's REVEL **0.821** and historical absence from gnomAD v2.1.1/v3.1.2 are
 from [ClinGen FBN1 VCEP's 2023-06-15 assessment](https://erepo.clinicalgenome.org/evrepo/ui/interpretation/f57714a2-598c-4e48-a07e-6858c037050e).

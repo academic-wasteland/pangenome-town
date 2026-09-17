@@ -25,7 +25,7 @@
   },
   {
     "id": "phenotype-discovery",
-    "text": "The request goes from Yamatai to Ubar. First, FAIRhaven describes the service: what it accepts, what it returns, its model version, access requirements, and known gaps. Discovery does not grant permission. This public service accepts registered town requests."
+    "text": "Your written request goes through Yamatai to Ubar’s contact agent. Its actual reply delegates to Phenomancer, with a structured plan you can inspect. FAIRhaven describes the service: what it accepts, what it returns, its model version, access requirements, and known gaps. Discovery does not grant permission. This public service accepts registered town requests."
   },
   {
     "id": "phenotype-analysis",
@@ -33,7 +33,7 @@
   },
   {
     "id": "phenotype-results",
-    "text": "Inspect the gene ranking and, for the private case, the local variant ranking. The expected F B N one allele is checked after scoring, not used to choose the result. Themis evaluates a pinned expert curation using A C M G criteria, with sources and missing evidence visible. Download the P D F variant report. This synthetic demonstration is not a patient diagnosis or a clinical sign off."
+    "text": "Inspect the comparison: in the default synthetic case, the F B N one allele is second by R E V E L alone, third by phenotype, and first only when both are combined. Switch the table order to compare them. The expected F B N one allele is checked after scoring, not used to choose the result. Themis evaluates a pinned expert curation using A C M G criteria, with sources and missing evidence visible. Download the P D F variant report. This synthetic demonstration is not a patient diagnosis or a clinical sign off."
   }
 ]
 }

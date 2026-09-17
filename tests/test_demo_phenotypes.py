@@ -26,19 +26,26 @@ def test_mapping_preserves_scores_and_excludes_conflicts(tmp_path):
 def test_live_request_requires_matching_fair_model(towns, tmp_path, wrong_model):
     class Client:
         acknowledged = False
-        def ask(self, town, *, operation, body):
+        def ask(self, town, *, operation, body, text=""):
+            self.operation = operation
+            assert text
+            if operation == "message":
+                return "intake"
             assert town == 'ubar' and operation == 'phenotype-search'
             assert body['include_human_orthologues'] is True and body['limit'] == 20
             assert body['method'] == 'indigena'
             return 'request'
         def wait(self, mid, **kwargs):
+            if mid == 'intake':
+                return [{'id':'intake-reply', 'from':'ubar', 'kind':'answer', 'in_reply_to':mid, 'body':{'ok':True, 'text':'Use Phenomancer.', 'plan':[{'town':'ubar','resident':'phenomancer','operation':'phenotype-search','record':RECORD}]}}]
             return [{'id': 'reply', 'from': 'ubar', 'kind': 'answer', 'in_reply_to': mid,
                      'body': {'ok': True, 'checkpoint_sha256': 'other' if wrong_model else 'model',
                               'orthology': {'source': 'MGI'}, 'candidate_count': 100,
                               'results': [{'gene': 'MGI:1', 'score': .4}]}}]
         def call(self, path, body):
-            assert path == '/v1/ack' and body == {'id': 'reply'}
-            self.acknowledged = True
+            assert path == '/v1/ack'
+            if body == {'id': 'reply'}:
+                self.acknowledged = True
     client = Client()
     description = {'record': {'@id': RECORD, 'version': 'sha256:model',
                              'access': {'town': 'ubar', 'operation': 'phenotype-search'}},
@@ -54,7 +61,7 @@ def test_live_request_requires_matching_fair_model(towns, tmp_path, wrong_model)
     stage.worker.join(5)
     assert stage.run['state'] == ('failed' if wrong_model else 'completed')
     assert (stage.run['result'] is None) == wrong_model
-    assert client.acknowledged != wrong_model
+    assert client.acknowledged
     assert stage.run['fair'] == description
     stage.reset(run_id)
     assert stage.run is None

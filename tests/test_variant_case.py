@@ -19,7 +19,7 @@ def configured(towns, tmp_path):
     vcf.write_bytes((CASE / 'patient.vcf').read_bytes())
     result = dict(towns)
     result['yamatai'] = dataclasses.replace(towns['yamatai'], extra={'private_variant_demo': {'enabled': True, 'vcf': str(vcf)}})
-    result['ubar'] = dataclasses.replace(towns['ubar'], extra={'variant_interpretation': {'enabled': True}})
+    result['ubar'] = dataclasses.replace(towns['ubar'], extra={'variant_interpretation': {'enabled': True}, 'phenotype_search': {'enabled': True}})
     return result
 
 
@@ -33,6 +33,11 @@ def test_private_local_rank_filters_and_no_sample_fields(configured):
     assert result['input_count'] == 6 and len(result['retained']) == 4
     assert result['retained'][0]['variant'] == VARIANT
     assert result['retained'][0]['gene_rank'] == 3
+    assert result['retained'][0]['revel_rank'] == 2
+    assert result['retained'][0]['combined_rank'] == 1
+    assert max(result['retained'], key=lambda r: r['revel'])['gene'] == 'ADAMTSL4'
+    swapped = rank(configured['yamatai'], 'yamatai', {'genes':['HSF4','FOXE3','ADAMTSL4','MGI:87872','FBN1']})
+    assert swapped['retained'][0]['gene'] == 'ADAMTSL4'  # phenotype evidence actually changes the winner
     assert any('AF' in x['reason'] for x in result['excluded'])
     assert any('quality' in x['reason'] for x in result['excluded'])
     serialized = json.dumps(result)
@@ -80,14 +85,18 @@ def test_full_stage_transmits_only_selected_allele_and_resets_report(configured,
     class Client:
         def __init__(self):
             self.replies = {}
-        def ask(self, town, *, operation, body):
-            mid = str(len(requests)); requests.append((town, operation, copy.deepcopy(body)))
-            if operation == 'phenotype-search':
+        def ask(self, town, *, operation, body, text=""):
+            assert text
+            mid = str(len(requests)); requests.append((town, operation, copy.deepcopy(body), text))
+            if operation == 'message':
+                from pangenome_town.research_intake import intake
+                result = intake(configured['ubar'], dict(body, text=text))
+            elif operation == 'phenotype-search':
                 result = {'ok': True, 'checkpoint_sha256': 'fixture', 'query': {'phenotypes': TERMS},
                           'candidate_count': 1529, 'orthology': {'source': 'fixture'},
                           'results': [{'gene': gene, 'score': .5, 'human_orthologue': {'symbol': gene}} for gene in GENES]}
             else:
-                result = interpret(configured['ubar'], body)
+                result = interpret(configured['ubar'], dict(body, text=text))
             self.replies[mid] = {'id': 'reply'+mid, 'from': town, 'kind': 'answer', 'in_reply_to': mid, 'body': result}
             return mid
         def wait(self, mid, **kwargs): return [self.replies[mid]]
@@ -101,9 +110,16 @@ def test_full_stage_transmits_only_selected_allele_and_resets_report(configured,
     assert stage.run['state'] == 'completed'
     assert stage.run['variant_benchmark']['recovered'] is True
     assert stage.report_bytes().startswith(b'%PDF-')
-    assert len(requests) == 2
-    assert set(requests[0][2]) == {'phenotypes', 'limit', 'method', 'include_human_orthologues'}
-    assert requests[1] == ('ubar', 'variant-interpretation', {'resident': 'themis', 'variant': VARIANT, 'phenotypes': TERMS})
+    assert len(requests) == 3
+    assert requests[0][1] == 'message' and requests[0][3] == stage.run['human_message']
+    assert set(requests[1][2]) == {'resident', 'phenotypes', 'limit', 'method', 'include_human_orthologues'}
+    assert requests[2][:3] == ('ubar', 'variant-interpretation', {'resident': 'themis', 'variant': VARIANT, 'phenotypes': TERMS})
     assert 'SYNTHETIC_YAMATAI_ONLY' not in json.dumps(requests)
+    sent = [e for e in stage.run['events'] if e['detail'].get('message_type') == 'sent']
+    assert [e['text'] for e in sent] == [q[3] for q in requests]
+    assert all(e['detail']['wire_body']['text'] == e['text'] for e in sent)
+    received = [e for e in stage.run['events'] if e['detail'].get('message_type') == 'received']
+    assert received[0]['text'] == stage.run['delegation']['text']
+    assert received[-1]['text'] == received[-1]['detail']['body']['text']
     stage.reset(stage.run['id'])
     with pytest.raises(StageError): stage.report_bytes()
