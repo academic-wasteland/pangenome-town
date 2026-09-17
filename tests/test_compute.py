@@ -905,6 +905,34 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
             await runner.dispatch(tes_payload, rcp_task=tampered_rcp_task)
         assert len(tasks_db) == initial_tasks_count
 
+        # 1b. Negative test: Missing rcp_digest in tags fails closed before network call
+        payload_no_digest = json.loads(json.dumps(tes_payload))
+        payload_no_digest.get("tags", {}).pop("rcp_digest", None)
+        with pytest.raises(SemanticPolicyError, match="payload tags must contain 'rcp_digest'"):
+            await runner.dispatch(payload_no_digest, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1c. Negative test: Non-entailed semantic policy fails closed before network call
+        class ContradictedReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                return "contradicted"
+
+        contradicted_gate = SemanticGate(manifest=manifest, reasoner=ContradictedReasoner())
+        rejecting_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=contradicted_gate)
+        with pytest.raises(SemanticPolicyError, match="contradicted"):
+            await rejecting_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1d. Negative test: Unverified / missing manifest on gate fails closed before network call
+        no_manifest_gate = SemanticGate(reasoner=EntailedReasoner())
+        no_manifest_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=no_manifest_gate)
+        with pytest.raises(SemanticPolicyError, match="without a trusted contract manifest"):
+            await no_manifest_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
         # 2. Positive test: Exact-task pass gate, dispatch to real local HTTP TES endpoint
         task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert task_id in tasks_db

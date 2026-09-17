@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import hashlib
+import hmac
 import json
 import shutil
 import time
@@ -192,18 +193,21 @@ class TESComputeRunner(ComputeRunner):
                     "TES dispatch failed semantic gating: no source RCP task provided"
                 )
             expected_digest = tes_task_payload.get("tags", {}).get("rcp_digest")
-            if expected_digest:
-                from ..exchange import canonical
+            if not expected_digest:
+                raise SemanticPolicyError(
+                    "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
+                )
+            from ..exchange import canonical
 
-                canonical_bytes = canonical(rcp_task)
-                if isinstance(canonical_bytes, str):
-                    canonical_bytes = canonical_bytes.encode("utf-8")
-                actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
-                if actual_digest != expected_digest:
-                    raise SemanticPolicyError(
-                        f"TES dispatch digest mismatch: payload has {expected_digest}, "
-                        f"but task computed {actual_digest}"
-                    )
+            canonical_bytes = canonical(rcp_task)
+            if isinstance(canonical_bytes, str):
+                canonical_bytes = canonical_bytes.encode("utf-8")
+            actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
+            if not hmac.compare_digest(actual_digest, expected_digest):
+                raise SemanticPolicyError(
+                    f"TES dispatch digest mismatch: payload has {expected_digest}, "
+                    f"but task computed {actual_digest}"
+                )
             self.gate.evaluate(rcp_task)
         elif rcp_task is not None:
             raise SemanticPolicyError(

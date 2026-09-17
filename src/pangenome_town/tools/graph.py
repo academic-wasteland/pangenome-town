@@ -185,18 +185,13 @@ class GraphTools:
         ]
 
         # Resolve manifest for semanticContract and ontologyProfile if available
-        contract_id = None
-        bundle_digest = None
         if manifest is not None:
             contract_id = getattr(manifest, "id", None)
             bundle_digest = getattr(manifest, "bundle_digest", None)
         else:
-            try:
-                rendered_manifest = contract.render(self.town, self.town.city_root / "contract")
-                contract_id = rendered_manifest.id
-                bundle_digest = rendered_manifest.bundle_digest
-            except (OSError, ValueError):
-                pass
+            rendered_manifest = contract.render(self.town, self.town.city_root / "contract")
+            contract_id = rendered_manifest.id
+            bundle_digest = rendered_manifest.bundle_digest
 
         resolved_graph_url = graph_url or f"file://{graph_path}"
         rcp_task: dict[str, Any] = {
