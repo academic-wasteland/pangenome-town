@@ -105,8 +105,8 @@ def _extract_outputs(
         seen.add(path)
         if not url:
             if base_url:
-                filename = os.path.basename(path)
-                url = f"{base_url.rstrip('/')}/{filename}"
+                rel_path = path.removeprefix("/container/output/").removeprefix("/container/").lstrip("/")
+                url = f"{base_url.rstrip('/')}/{rel_path}"
             else:
                 raise ValueError(
                     f"TES output '{path}' requires an explicit remote output destination url, "

@@ -111,13 +111,19 @@ class SemanticGate:
             )
 
         if callable(target_reasoner) and not hasattr(target_reasoner, "validate") and not hasattr(target_reasoner, "evaluate_gate") and not hasattr(target_reasoner, "classify"):
-            result = target_reasoner(rcp_task)
+            try:
+                result = target_reasoner(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: callable reasoner execution error: {exc}") from exc
             if isinstance(result, dict) and "status" in result:
                 status = result["status"]
             else:
                 raise SemanticPolicyError("Semantic gating requires a structured reasoning validation report with a 'status' field")
         elif target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
-            result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
+            try:
+                result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: reasoner evaluate_gate error: {exc}") from exc
             if isinstance(result, str):
                 status = result
             elif isinstance(result, dict) and "status" in result:
@@ -125,10 +131,16 @@ class SemanticGate:
             else:
                 status = str(result)
         elif target_reasoner is not None and hasattr(target_reasoner, "validate"):
-            result = target_reasoner.validate(rcp_task)
+            try:
+                result = target_reasoner.validate(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: reasoner validate error: {exc}") from exc
             status = result.get("status") if isinstance(result, dict) else str(result)
         elif target_reasoner is not None and hasattr(target_reasoner, "classify"):
-            report = SemanticValidator(target_manifest, target_reasoner).validate(rcp_task)
+            try:
+                report = SemanticValidator(target_manifest, target_reasoner).validate(rcp_task)
+            except Exception as exc:
+                raise SemanticPolicyError(f"Semantic gating failed: semantic validator error: {exc}") from exc
             status = report.get("status", "unknown")
         else:
             try:
@@ -359,6 +371,8 @@ class TESComputeRunner(ComputeRunner):
             raise ComputeError("TES poll returned invalid JSON") from exc
 
         raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
+        if not isinstance(raw_state, str):
+            raw_state = "UNKNOWN"
         state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
         return state.value
 

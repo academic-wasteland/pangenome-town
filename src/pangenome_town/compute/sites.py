@@ -143,7 +143,14 @@ def load_sites(town: TownConfig) -> list[Site]:
             if not host.startswith(("http://", "https://")):
                 raise ComputeError(f"site {name}: TES driver host must start with http:// or https://")
             from urllib.parse import urlparse
-            parsed_host = urlparse(host).hostname or ""
+            parsed = urlparse(host)
+            if parsed.username or parsed.password:
+                raise ComputeError(f"site {name}: TES host URL must not contain embedded user credentials; configure token instead")
+            if parsed.query or parsed.fragment:
+                raise ComputeError(f"site {name}: TES host URL must not contain query parameters or fragments")
+            parsed_host = parsed.hostname or ""
+            if not parsed_host:
+                raise ComputeError(f"site {name}: TES host URL must specify a valid hostname")
             is_loopback = parsed_host in {"localhost", "127.0.0.1", "::1"}
             if not is_loopback and not host.startswith("https://") and allow_insecure is not True:
                 raise ComputeError(f"site {name}: remote TES endpoints require HTTPS unless allow_insecure_http is true")
@@ -521,8 +528,11 @@ class TESDriver:
         if rcp_task is None:
             raise ComputeError(f"site {self.site.name}: TES driver requires an original, verified RCP task document")
 
+        if not self.site.host:
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit host URL")
+
         runner = TESComputeRunner(
-            endpoint_url=self.site.host or "http://127.0.0.1:8000",
+            endpoint_url=self.site.host,
             bearer_token=self.site.token or "",
             gate=gate,
             allow_insecure_http=bool(self.site.allow_insecure_http or self.options.get("allow_insecure_http")),
@@ -534,6 +544,13 @@ class TESDriver:
         )
         if not output_prefix or not output_prefix.startswith(("http://", "https://", "file://")):
             raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S) or file:// output storage URL (output_url_prefix); object-store protocols like s3:// must be fetched via HTTP(S) gateways")
+        if output_prefix.startswith("http://"):
+            from urllib.parse import urlparse
+            output_host = urlparse(output_prefix).hostname or ""
+            if output_host not in {"localhost", "127.0.0.1", "::1"} and not (
+                self.site.allow_insecure_http or self.options.get("allow_insecure_http")
+            ):
+                raise ComputeError(f"TES output destination '{output_prefix}' requires HTTPS unless allow_insecure_http is true")
 
         default_image = "quay.io/biocontainers/bcftools:1.21--h8b25389_0" if job.workflow in {"genotype-export", "allele-frequency"} else "quay.io/vgteam/vg:v1.64.1"
         image = self.options.get("image", default_image)
@@ -549,11 +566,22 @@ class TESDriver:
         if job.work_dir:
             path_replacements[job.work_dir] = container_work_dir
 
+        used_input_names: dict[str, str] = {}
+        def _allocate_container_input_path(src: str) -> str:
+            clean = src.split("?", 1)[0].split("#", 1)[0]
+            base_name = Path(clean).name or "input.dat"
+            if base_name in used_input_names and used_input_names[base_name] != src:
+                import hashlib
+                token = hashlib.sha256(src.encode("utf-8")).hexdigest()[:8]
+                stem = Path(base_name).stem
+                suffix = Path(base_name).suffix
+                base_name = f"{stem}_{token}{suffix}"
+            used_input_names[base_name] = src
+            return f"{container_input_dir}/{base_name}"
+
         for k, v in self.site.paths.items():
             dataset_storage_map[k] = v
-            # If path is a host path or URI, assign a container path for command substitution
-            clean_v = v.split("?", 1)[0].split("#", 1)[0]
-            input_container_path = f"{container_input_dir}/{Path(clean_v).name}"
+            input_container_path = _allocate_container_input_path(v)
             path_replacements[v] = input_container_path
 
         if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
@@ -561,9 +589,8 @@ class TESDriver:
                 if isinstance(ds, dict) and ds.get("@id"):
                     ds_id = ds["@id"]
                     if ds.get("url"):
-                        clean_url = ds["url"].split("?")[0].split("#")[0]
                         dataset_storage_map[ds_id] = ds["url"]
-                        path_replacements[ds["url"]] = f"{container_input_dir}/{Path(clean_url).name}"
+                        path_replacements[ds["url"]] = _allocate_container_input_path(ds["url"])
                     elif ds_id in self.site.paths:
                         dataset_storage_map[ds_id] = self.site.paths[ds_id]
                     else:
@@ -578,9 +605,8 @@ class TESDriver:
                     if ds_id in self.site.paths:
                         dataset_storage_map[ds_id] = self.site.paths[ds_id]
                     elif ds.startswith(("http://", "https://", "s3://", "file://", "/")):
-                        clean_url = ds.split("?")[0].split("#")[0]
                         dataset_storage_map[ds_id] = ds
-                        path_replacements[ds] = f"{container_input_dir}/{Path(clean_url).name}"
+                        path_replacements[ds] = _allocate_container_input_path(ds)
                     else:
                         candidate_key = "vcf" if any(k in ds.lower() for k in ("vcf", "restricted", "individual")) else "graph"
                         if candidate_key in self.site.paths:
@@ -647,6 +673,8 @@ class TESDriver:
 
         async def _run() -> str:
             task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+            if hasattr(self, "on_dispatched") and callable(self.on_dispatched):
+                self.on_dispatched()
             # Poll with timeout derived from wall time
             attempts = 0
             while attempts < max_attempts:

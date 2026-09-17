@@ -929,12 +929,14 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
                 task_id = self.path.split("/v1/tasks/")[1]
                 if task_id in tasks_db:
                     task_info = tasks_db[task_id]
-                    # Advance state transition on poll: QUEUED -> RUNNING -> COMPLETE
-                    task_info["poll_count"] += 1
-                    if task_info["poll_count"] == 1:
-                        task_info["state"] = "RUNNING"
-                    elif task_info["poll_count"] >= 2:
-                        task_info["state"] = "COMPLETE"
+                    # Advance state transition on poll if state was initially QUEUED
+                    current_state = task_info.get("state")
+                    if isinstance(current_state, str) and current_state in {"QUEUED", "RUNNING"}:
+                        task_info["poll_count"] += 1
+                        if task_info["poll_count"] == 1:
+                            task_info["state"] = "RUNNING"
+                        elif task_info["poll_count"] >= 2:
+                            task_info["state"] = "COMPLETE"
 
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -1037,6 +1039,25 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
             await runner.dispatch(mismatched_payload, rcp_task=contract_mismatch_task)
         assert len(tasks_db) == initial_tasks_count
 
+        # 1f. Negative test: Reasoner crash converts to SemanticPolicyError fail-closed
+        class CrashingReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                raise RuntimeError("KM reasoner process killed")
+
+        crashing_gate = SemanticGate(manifest=manifest, reasoner=CrashingReasoner())
+        crashing_runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=crashing_gate)
+        with pytest.raises(SemanticPolicyError, match="reasoner evaluate_gate error"):
+            await crashing_runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 1g. Negative test: Poll status receives non-string or malformed state without raising TypeError
+        tasks_db["task-malformed-state"] = {"id": "task-malformed-state", "state": {"nested": "dict"}, "poll_count": 0, "outputs": []}
+        state_malformed = await runner.poll_status("task-malformed-state")
+        assert state_malformed == ComputeState.UNKNOWN.value
+
         # 2. Positive test: Exact-task pass gate, dispatch to real local HTTP TES endpoint
         task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert task_id in tasks_db
@@ -1092,6 +1113,43 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         assert res.returncode == 0
         assert "out_chunk.vg" in res.outputs
         assert res.outputs["out_chunk.vg"].exists()
+
+        # 6. Negative test: TESDriver rejects non-loopback plaintext http output_prefix before dispatch
+        insecure_site = Site(
+            name="insecure_site",
+            driver="tes",
+            host=endpoint,
+            workdir="/tmp/tes-work",
+            token=auth_token,
+            output_url_prefix="http://remote.storage.org/outputs",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+        insecure_driver = TESDriver(
+            insecure_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix="http://remote.storage.org/outputs",
+        )
+        with pytest.raises(ComputeError, match="requires HTTPS unless allow_insecure_http is true"):
+            insecure_driver.run(job, fetch_to=fetch_dir)
+
+        # 7. Negative test: TES site with credentials in host URL rejected during load_sites
+        from pangenome_town.compute.sites import load_sites
+        bad_host_town = dataclasses.replace(
+            town,
+            extra={
+                "sites": [
+                    {
+                        "name": "credential_site",
+                        "driver": "tes",
+                        "host": "https://user:password@tes.example.com",
+                        "output_url_prefix": f"file://{tmp_path.resolve()}",
+                    }
+                ]
+            },
+        )
+        with pytest.raises(ComputeError, match="must not contain embedded user credentials"):
+            load_sites(bad_host_town)
 
     finally:
         server.shutdown()

@@ -232,8 +232,12 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                     manifest=manifest,
                     reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a) if v else {"status": "indeterminate"},
                 )
+                # Align dataset individual with town contract restricted dataset declarations
+                configured_datasets = contract.restricted_datasets(town)
+                match = next((entry for entry in configured_datasets if entry["key"] == "vcf" or entry["name"] == data.get("id") or entry["key"] == data.get("id")), None)
+                ds_iri = match["iri"] if match else f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}"
                 ds_entity = {
-                    "@id": f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
+                    "@id": ds_iri,
                     "@type": ["RestrictedDataset", "IndividualGenotypeData"],
                 }
                 task_doc = pipeline.task_document(
@@ -253,14 +257,26 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                 actual_driver = driver or driver_for(selected)
             if hasattr(actual_driver, 'on_progress'):
                 actual_driver.on_progress = lambda dataset=data['id'], **detail: event('scheduler', dataset=dataset, **detail)
-            def _on_start(detail, dataset=data['id']):
+
+            def _on_dispatched():
                 nonlocal dispatched_task
                 dispatched_task = True
+
+            if hasattr(actual_driver, "on_dispatched"):
+                actual_driver.on_dispatched = _on_dispatched
+
+            is_tes_driver = (selected.driver == "tes")
+
+            def _on_start(detail, dataset=data['id'], is_tes=is_tes_driver):
+                nonlocal dispatched_task
+                if not is_tes:
+                    dispatched_task = True
                 event('execution_started', dataset=dataset, **detail)
 
             result = run_task(town, template_name=task['workflow'], region=region, out_dir=out,
                               site=selected, driver=actual_driver, dataset_samples=tuple(data['samples']),
                               on_start=_on_start)
+            dispatched_task = True
             outputs = []
             for output in result['outputs']:
                 path = Path(output['path'])
