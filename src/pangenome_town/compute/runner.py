@@ -163,15 +163,26 @@ class TESComputeRunner(ComputeRunner):
         endpoint_url: str,
         bearer_token: str,
         gate: SemanticGate | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
         self.bearer_token = bearer_token
         self.gate = gate
+        self._client = client
         self.headers = {
             "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient()
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def dispatch(
         self,
@@ -225,55 +236,55 @@ class TESComputeRunner(ComputeRunner):
         self.gate.evaluate(rcp_task)
 
         url = f"{self.endpoint_url}/v1/tasks"
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url,
-                    json=tes_task_payload,
-                    headers=self.headers,
-                )
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                raise ComputeError(
-                    f"TES dispatch failed with HTTP {exc.response.status_code}: {exc.response.text}"
-                ) from exc
-            except httpx.RequestError as exc:
-                raise ComputeError(f"TES dispatch network error: {exc}") from exc
+        client = await self._get_client()
+        try:
+            response = await client.post(
+                url,
+                json=tes_task_payload,
+                headers=self.headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ComputeError(
+                f"TES dispatch failed with HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ComputeError(f"TES dispatch network error: {exc}") from exc
 
-            try:
-                data = response.json()
-            except ValueError as exc:
-                raise ComputeError("TES dispatch returned invalid JSON") from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ComputeError("TES dispatch returned invalid JSON") from exc
 
-            if not isinstance(data, dict) or "id" not in data:
-                raise ComputeError(f"TES dispatch returned invalid response: {data}")
-            return str(data["id"])
+        if not isinstance(data, dict) or "id" not in data:
+            raise ComputeError(f"TES dispatch returned invalid response: {data}")
+        return str(data["id"])
 
     async def poll_status(self, task_id: str) -> str:
         """Sends an HTTP GET to {endpoint_url}/v1/tasks/{task_id}. Returns ComputeState enum value."""
         url = f"{self.endpoint_url}/v1/tasks/{task_id}"
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    url,
-                    headers=self.headers,
-                )
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                raise ComputeError(
-                    f"TES poll failed with HTTP {exc.response.status_code}: {exc.response.text}"
-                ) from exc
-            except httpx.RequestError as exc:
-                raise ComputeError(f"TES poll network error: {exc}") from exc
+        client = await self._get_client()
+        try:
+            response = await client.get(
+                url,
+                headers=self.headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ComputeError(
+                f"TES poll failed with HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ComputeError(f"TES poll network error: {exc}") from exc
 
-            try:
-                data = response.json()
-            except ValueError as exc:
-                raise ComputeError("TES poll returned invalid JSON") from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ComputeError("TES poll returned invalid JSON") from exc
 
-            raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
-            state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
-            return state.value
+        raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
+        state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
+        return state.value
 
 AGGREGATE_HEADER = "CHROM\tPOS\tREF\tALT\tallele_count\tallele_number\talt_frequency\n"
 # The same aggregation as `aggregate_genotypes`, run on a remote site so individual genotypes never leave it.

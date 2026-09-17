@@ -216,19 +216,22 @@ class GraphTools:
 
         from research_commons.constants import CONTEXT_IRI
 
+        from ..rcp import iri
+
         rcp_task: dict[str, Any] = {
             "@context": CONTEXT_IRI,
             "@id": task_uuid,
-            "@type": "ResearchTask",
+            "@type": ["ResearchTask", f"{contract.PG}RegionExtractionTask"],
             "taskType": f"{contract.PG}RegionExtractionTask",
             "requestedBy": {"@id": resolved_requester, "@type": "Agent"},
             "partOfRequest": resolved_request_id,
             "usesDataset": [
                 {
                     "@id": graph_id,
-                    "@type": "PublicDataset",
+                    "@type": ["PublicDataset", f"{contract.PG}PangenomeGraph"],
                     "name": f"{self.town.display} served graph",
-                }
+                },
+                iri.region_iri(self.town.name, region).entity(),
             ],
         }
         if contract_id:
@@ -243,6 +246,12 @@ class GraphTools:
             output_url_prefix=output_url_prefix,
             stdout=output_path,
             dataset_storage_map={graph_id: graph_url},
+            inputs=[
+                {
+                    "url": graph_url,
+                    "path": container_graph_path,
+                }
+            ],
             outputs=[
                 {
                     "path": output_path,

@@ -12,7 +12,7 @@ class ComputeError(RuntimeError):
     """A site, workflow, or job could not be used; the message says why."""
 
 
-class SemanticPolicyError(RuntimeError):
+class SemanticPolicyError(ComputeError):
     """ADR 0001: Raised when semantic gating fails under SROIQ reasoning."""
 
 

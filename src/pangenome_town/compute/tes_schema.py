@@ -128,6 +128,7 @@ def build_tes_task(
     stdout: str | None = None,
     stderr: str | None = None,
     dataset_storage_map: dict[str, str] | None = None,
+    inputs: list[dict[str, Any]] | None = None,
     outputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
@@ -135,6 +136,8 @@ def build_tes_task(
     Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
     """
     extracted_inputs = _extract_inputs(rcp_task, dataset_storage_map=dataset_storage_map)
+    if inputs:
+        extracted_inputs.extend(inputs)
     extracted_outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
     if outputs:
         extracted_outputs.extend(outputs)
