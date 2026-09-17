@@ -690,9 +690,15 @@ async def test_tes_compute_runner_dispatch_and_poll(trusted_manifest):
     runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token, gate=gate)
 
     rcp_task = {
-        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@context": "https://w3id.org/research-commons/v0.1/context.jsonld",
         "@id": "urn:uuid:test-job-999",
-        "@type": ["ResearchTask"],
+        "@type": "ResearchTask",
+        "semanticContract": trusted_manifest.id,
+        "ontologyProfile": trusted_manifest.bundle_digest,
+        "partOfRequest": "urn:uuid:req-1",
+        "taskType": "https://w3id.org/academic-wasteland/pangenome/v0.1/RegionExtractionTask",
+        "requestedBy": {"@id": "https://example.org/agent", "@type": "Agent"},
+        "usesDataset": [{"@id": "https://example.org/ds", "@type": "PublicDataset"}],
     }
     from pangenome_town.exchange import canonical
 
@@ -941,7 +947,7 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
 
         # 1. Negative test: Modified rcp_task causes digest mismatch, gate blocks submission before network call
         tampered_rcp_task = dict(rcp_task)
-        tampered_rcp_task["name"] = "Tampered Task Name"
+        tampered_rcp_task["partOfRequest"] = "urn:uuid:tampered-req-id"
         initial_tasks_count = len(tasks_db)
         with pytest.raises(SemanticPolicyError, match="TES dispatch digest mismatch"):
             await runner.dispatch(tes_payload, rcp_task=tampered_rcp_task)

@@ -190,11 +190,27 @@ class TESComputeRunner(ComputeRunner):
             raise SemanticPolicyError(
                 "TES dispatch failed semantic gating: no source RCP task provided"
             )
-        expected_digest = tes_task_payload.get("tags", {}).get("rcp_digest")
+
+        from research_commons.schema import StructuralValidationError, validate_message
+
+        try:
+            validate_message(rcp_task)
+        except StructuralValidationError as err:
+            raise SemanticPolicyError(f"TES dispatch rejected task: structural validation failed: {err}") from err
+
+        tags = tes_task_payload.get("tags", {})
+        expected_digest = tags.get("rcp_digest")
         if not expected_digest:
             raise SemanticPolicyError(
                 "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
             )
+
+        expected_id = tags.get("rcp_id")
+        if expected_id and expected_id != rcp_task.get("@id"):
+            raise SemanticPolicyError(
+                f"TES dispatch rcp_id mismatch: payload tags have '{expected_id}', but task @id is '{rcp_task.get('@id')}'"
+            )
+
         from ..exchange import canonical
 
         canonical_bytes = canonical(rcp_task)

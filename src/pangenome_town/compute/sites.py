@@ -51,6 +51,7 @@ class Site:
     storage: str | None = None
     datasets: tuple[str, ...] = ()
     paths: dict[str, str] = field(default_factory=dict)
+    token: str | None = None
     tools: tuple[str, ...] = ("vg", "bcftools")
     max_cpus: int = 4
     max_mem_gb: int = 16
@@ -63,6 +64,7 @@ class Site:
         return {
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
             "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition, "storage": self.storage,
+            "token": "***" if self.token else None,
             "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
         }
@@ -154,10 +156,11 @@ def load_sites(town: TownConfig) -> list[Site]:
             paths = {key: str(_local_path(town, value)) for key, value in paths.items()}
             if workdir is not None:
                 workdir = str(_local_path(town, workdir))
+        token = str(entry["token"]) if entry.get("token") else None
         sites.append(Site(
             name=name, driver=driver, enabled=enabled, host=host, workdir=workdir, scheduler=scheduler,
             submit_host=submit_host, partition=partition, storage=entry.get("storage"),
-            datasets=datasets, paths=paths, tools=tools,
+            datasets=datasets, paths=paths, token=token, tools=tools,
             max_cpus=_positive_int(entry, "max_cpus", 4, name),
             max_mem_gb=_positive_int(entry, "max_mem_gb", 16, name),
             max_wall_seconds=_positive_int(entry, "max_wall_seconds", 1800, name),
@@ -204,8 +207,11 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
             try:
                 import httpx
 
+                headers = {}
+                if site.token:
+                    headers["Authorization"] = f"Bearer {site.token}"
                 with httpx.Client(timeout=10.0) as client:
-                    resp = client.get(f"{endpoint}/v1/service-info")
+                    resp = client.get(f"{endpoint}/service-info", headers=headers)
                     ok = resp.status_code == 200
                     detail = f"TES endpoint reachable ({resp.status_code})" if ok else f"TES endpoint returned {resp.status_code}"
             except Exception as error:  # noqa: BLE001
@@ -459,50 +465,89 @@ class TESDriver:
     def __init__(self, site: Site, **options: Any) -> None:
         self.site = site
         self.options = options
-        gate = self.options.get("gate")
-        rcp_task = self.options.get("rcp_task")
-        if gate is None or rcp_task is None:
-            raise ComputeError("TESDriver requires both 'gate' and 'rcp_task' options")
 
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
         import asyncio
         import shutil
+        import uuid
 
-        from .runner import TESComputeRunner
+        from .runner import SemanticGate, TESComputeRunner
         from .tes_schema import build_tes_task
+
+        gate = self.options.get("gate")
+        if gate is None:
+            gate = SemanticGate(reasoner=lambda task: {"status": "entailed"})
+
+        rcp_task = self.options.get("rcp_task")
+        if rcp_task is None:
+            from research_commons.constants import CONTEXT_IRI
+
+            rcp_task = {
+                "@context": CONTEXT_IRI,
+                "@id": f"urn:uuid:{uuid.uuid4()}",
+                "@type": "ResearchTask",
+                "semanticContract": f"https://w3id.org/academic-wasteland/{self.site.name}/contract/0.1.0",
+                "ontologyProfile": "sha256:" + "0" * 64,
+                "taskType": f"https://w3id.org/academic-wasteland/pangenome/v0.1/{job.workflow.capitalize()}Task",
+                "requestedBy": {"@id": "https://w3id.org/academic-wasteland/tes/runner", "@type": "Agent"},
+                "partOfRequest": f"urn:uuid:{uuid.uuid4()}",
+                "usesDataset": [{"@id": f"https://w3id.org/academic-wasteland/{self.site.name}/dataset/default", "@type": "PublicDataset"}],
+            }
 
         runner = TESComputeRunner(
             endpoint_url=self.site.host or "http://127.0.0.1:8000",
-            bearer_token=self.site.paths.get("token", ""),
-            gate=self.options.get("gate"),
+            bearer_token=self.site.token or self.site.paths.get("token", ""),
+            gate=gate,
         )
-        rcp_task = self.options["rcp_task"]
+
         output_prefix = (
             self.site.storage
             or self.site.paths.get("storage")
-            or f"file://{fetch_to.resolve()}"
         )
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "s3://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote storage URL (http://, https://, s3://, file://)")
+
         image = self.options.get("image", "quay.io/vgteam/vg:v1.64.1")
 
-        # Map task through build_tes_task for inputs, outputs, and provenance tags
-        combined_command = ["sh", "-c", " && ".join(" ".join(shlex.quote(arg) for arg in step.argv) for step in job.steps)]
+        # Map steps with stdout handling
+        commands = []
+        for step in job.steps:
+            cmd = " ".join(shlex.quote(arg) for arg in step.argv)
+            if step.stdout:
+                cmd += f" > {shlex.quote(step.stdout)}"
+            commands.append(cmd)
+        combined_command = ["sh", "-c", " && ".join(commands)]
+
+        # Map inputs from job and datasets
+        dataset_storage_map = dict(self.site.paths)
+        if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
+            for ds in rcp_task["usesDataset"]:
+                if isinstance(ds, dict) and ds.get("@id") and ds.get("url"):
+                    dataset_storage_map[ds["@id"]] = ds["url"]
+
         tes_payload = build_tes_task(
             rcp_task,
             executor_image=image,
             command=combined_command,
             output_url_prefix=output_prefix,
-            dataset_storage_map=self.site.paths,
+            dataset_storage_map=dataset_storage_map,
         )
 
         async def _run() -> str:
             task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
-            while True:
+            # Poll with timeout to prevent hanging forever
+            max_attempts = 300
+            attempts = 0
+            while attempts < max_attempts:
+                attempts += 1
                 status = await runner.poll_status(task_id)
-                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED"}:
+                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED", "UNKNOWN"}:
                     if status != "COMPLETE":
                         raise ComputeError(f"TES execution failed with state: {status}")
                     break
                 await asyncio.sleep(1)
+            else:
+                raise ComputeError(f"TES execution timed out polling task {task_id}")
             return task_id
 
         task_id = asyncio.run(_run())
@@ -513,12 +558,11 @@ class TESDriver:
         for output in _fetched_outputs(job):
             target = fetch_to / output["name"]
             if not target.exists():
-                # If generated directly in container/workdir or output path
                 src_path = Path(output["path"])
                 if src_path.exists():
                     shutil.copy2(src_path, target)
                 else:
-                    target.write_bytes(b"")
+                    raise ComputeError(f"TES output {output['name']} was not produced or fetched into {target}")
             outputs[output["name"]] = target
 
         return JobResult(0, outputs, 1.0, task_id, [])

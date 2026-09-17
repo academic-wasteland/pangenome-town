@@ -214,26 +214,20 @@ class GraphTools:
         resolved_request_id = request_id or f"urn:uuid:{uuid.uuid4()}"
         graph_id = contract.graph_iri(self.town)
 
+        from research_commons.constants import CONTEXT_IRI
+
         rcp_task: dict[str, Any] = {
-            "@context": "https://w3id.org/research-commons/v0.1/",
+            "@context": CONTEXT_IRI,
             "@id": task_uuid,
-            "@type": ["ResearchTask", f"{contract.PG}RegionExtractionTask"],
+            "@type": "ResearchTask",
             "taskType": f"{contract.PG}RegionExtractionTask",
             "requestedBy": {"@id": resolved_requester, "@type": "Agent"},
             "partOfRequest": resolved_request_id,
             "usesDataset": [
                 {
                     "@id": graph_id,
-                    "@type": ["PublicDataset", f"{contract.PG}PangenomeGraph"],
-                    "url": graph_url,
-                    "path": container_graph_path,
-                }
-            ],
-            "outputs": [
-                {
-                    "name": f"{stem}.vg",
-                    "path": output_path,
-                    "url": f"{output_url_prefix.rstrip('/')}/{stem}.vg",
+                    "@type": "PublicDataset",
+                    "name": f"{self.town.display} served graph",
                 }
             ],
         }
@@ -248,6 +242,13 @@ class GraphTools:
             command=command,
             output_url_prefix=output_url_prefix,
             stdout=output_path,
+            dataset_storage_map={graph_id: graph_url},
+            outputs=[
+                {
+                    "path": output_path,
+                    "url": f"{output_url_prefix.rstrip('/')}/{stem}.vg",
+                }
+            ],
         )
         return tes_payload, rcp_task
 

@@ -59,8 +59,10 @@ def _extract_inputs(
     if isinstance(explicit_inputs, list):
         for item in explicit_inputs:
             if isinstance(item, dict):
-                url = item.get("url") or item.get("path")
-                target = item.get("path") if item.get("url") else None
+                url = item.get("url") or item.get("downloadUrl")
+                target = item.get("path")
+                if not url and target and dataset_storage_map:
+                    url = dataset_storage_map.get(target)
                 if url:
                     add_input(url, target)
             elif isinstance(item, str):
@@ -126,13 +128,16 @@ def build_tes_task(
     stdout: str | None = None,
     stderr: str | None = None,
     dataset_storage_map: dict[str, str] | None = None,
+    outputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
 
     Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
     """
-    inputs = _extract_inputs(rcp_task, dataset_storage_map=dataset_storage_map)
-    outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
+    extracted_inputs = _extract_inputs(rcp_task, dataset_storage_map=dataset_storage_map)
+    extracted_outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
+    if outputs:
+        extracted_outputs.extend(outputs)
 
     executor: dict[str, Any] = {
         "image": executor_image,
@@ -163,8 +168,8 @@ def build_tes_task(
     task_payload: dict[str, Any] = {
         "name": rcp_task.get("name") or rcp_id or "rcp-task",
         "description": rcp_task.get("description", ""),
-        "inputs": inputs,
-        "outputs": outputs,
+        "inputs": extracted_inputs,
+        "outputs": extracted_outputs,
         "executors": executors,
         "tags": tags,
     }
