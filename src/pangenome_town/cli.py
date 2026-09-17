@@ -61,6 +61,9 @@ def parser() -> argparse.ArgumentParser:
     send.add_argument("--text", required=True)
     send.add_argument("--region", help="assembly:chrom:start-end the question is about")
     send.add_argument("--reply-to", help="message id this envelope answers")
+    send.add_argument("--conversation-parent", help="delegate work under a received conversation message")
+    send.add_argument("--resident", help="named resident at the destination town")
+    send.add_argument("--payload", type=Path, help="JSON object with structured request data")
     send.add_argument("--attach", action="append", default=[], type=Path, help="file to attach (repeatable)")
     send.add_argument("--dry-run", action="store_true")
 
@@ -162,6 +165,7 @@ def parser() -> argparse.ArgumentParser:
     show.add_argument("id")
     approve = authority_commands.add_parser("approve", help="HUMAN DECISION: issue the credential an application asks for")
     approve.add_argument("application")
+    approve.add_argument("--evidence-ref", help="Private reference to manually reviewed evidence (required for relay applications)")
     approve.add_argument("--valid-days", type=int, default=30)
     approve.add_argument("--decided-by", help="IRI of the deciding human (default: [authority].operator)")
     deny = authority_commands.add_parser("deny", help="HUMAN DECISION: deny an application")
@@ -294,7 +298,25 @@ def _dispatch(arguments: argparse.Namespace) -> int:
         from .cli_delegation import command
         return command(arguments, town, log)
     if arguments.command == "send":
-        body: dict[str, Any] = {"text": arguments.text}
+        body: dict[str, Any] = {}
+        if arguments.payload:
+            body = json.loads(arguments.payload.read_text())
+            if not isinstance(body, dict) or any(k in body for k in ('text', '_conversation')):
+                raise ValueError('Payload must be an object without text or conversation attribution')
+        body['text'] = arguments.text
+        if arguments.resident:
+            body['resident'] = arguments.resident
+            body.setdefault('operation', 'message')
+        parent_id = arguments.conversation_parent or arguments.reply_to
+        if parent_id:
+            original = log.envelope(parent_id)
+            if arguments.conversation_parent and (original is None or original.recipient != town.name):
+                raise ValueError('Delegation parent must be a request received by this town')
+            if original and '_conversation' in original.body:
+                from wasteland.conversations import child_context
+                body['_conversation'] = child_context(original.body['_conversation'], parent_id)
+            if arguments.conversation_parent:
+                body.setdefault('operation', 'message')
         if arguments.region:
             body["region"] = str(graph.Region.parse(arguments.region, town.default_assembly))
         kind = "answer" if arguments.reply_to and arguments.kind == "question" else arguments.kind

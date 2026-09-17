@@ -17,5 +17,23 @@
   ],
   "common": [
     {"id":"demo-failed","text":"The workflow stopped or a check failed. No successful result is being claimed. Inspect the recorded error on the page before resetting this demonstration."}
-  ]
+  ],
+  "phenotypes": [
+  {
+    "id": "phenotype-question",
+    "text": "A clinician asks for help diagnosing a synthetic patient from their symptoms and available genetic data. Each phenotype is specified with its label and H P O identifier. The clinician does not name an algorithm or assign work to towns. The patient data carries its own access and sharing restrictions."
+  },
+  {
+    "id": "phenotype-discovery",
+    "text": "The contact agent reads the attached data policy and advertised services. It discovers phenotype prioritization in Ubar. The V C F may only be analysed in Yamatai, so the gene ranking travels to the data. Only a selected allele and phenotype terms may go to an external interpretation service. Inspect the actual request, the agent’s explanation, and its proposed plan."
+  },
+  {
+    "id": "phenotype-analysis",
+    "text": "A new INDIGENA query is running. Ubar ranks mouse gene profiles and annotates human orthologues. With the private case enabled, Yamatai uses that gene list to screen its own synthetic V C F: quality, genotype, and population frequency first, then R E V E L and phenotype rank. The V C F never goes to Ubar. Only the selected allele and phenotype terms are sent to Themis for interpretation."
+  },
+  {
+    "id": "phenotype-results",
+    "text": "Inspect the comparison: in the default synthetic case, the F B N one allele is second by R E V E L alone, third by phenotype, and first only when both are combined. Switch the table order to compare them. The expected F B N one allele is checked after scoring, not used to choose the result. Themis evaluates a pinned expert curation using A C M G criteria, with sources and missing evidence visible. Download the P D F variant report. This synthetic demonstration is not a patient diagnosis or a clinical sign off."
+  }
+]
 }

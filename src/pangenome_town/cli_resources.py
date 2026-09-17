@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .authority import AUTHORITY, keys, registrar
 from .authority import credentials as creds
+from .authority import keys, registrar
 from .exchange import ExchangeLog
 
 HOLDERS_DIR = Path.home() / ".gc" / "holders"
@@ -252,7 +252,7 @@ def authority_command(arguments: Any, town: config.TownConfig, log: ExchangeLog)
         else:
             _print({"credential": registry.credential(arguments.id), "status": registry.status(arguments.id)})
     elif command == "approve":
-        document = registry.approve(arguments.application, valid_days=arguments.valid_days, decided_by=arguments.decided_by or operator)
+        document = registry.approve(arguments.application, valid_days=arguments.valid_days, decided_by=arguments.decided_by or operator, evidence_ref=arguments.evidence_ref)
         log.event(town.name, "credential_issued", document["id"], {"application": arguments.application, "type": document["type"], "holder": document["credentialSubject"]["id"]})
         _print(document)
     elif command == "deny":

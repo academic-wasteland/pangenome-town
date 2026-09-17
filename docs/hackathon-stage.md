@@ -328,3 +328,134 @@ Verify the public site without submitting any computation:
 ```sh
 .venv/bin/python examples/public_replay_demo.py
 ```
+
+## Live visitors on the host laptop
+
+For independent visitor sessions, use the dedicated live demo server:
+
+```sh
+.venv/bin/python -m pangenome_town.demo_public \
+  --towns ../ubar/town.toml ../yamatai/town.toml \
+  --storage ~/.local/state/wasteland-public-demo \
+  --bind 0.0.0.0 --port 8395 --slots 2
+```
+
+Attendees open `http://<laptop-Wi-Fi-IP>:8395/demo` and
+`http://<laptop-Wi-Fi-IP>:8395/demo/visitor`. Each browser receives an unguessable,
+HTTP-only session cookie and its own control token, stage instances, signing keys,
+outputs and resets. Tabs in the same browser share that visitor session; use a
+private window or another browser for a second visitor. Separate visitors cannot
+read, approve or reset one another's runs. A session expires after two idle hours
+unless its worker is still running. Restarting the service clears browser sessions;
+completed run artifacts remain in the private storage directory.
+
+Both cases run new analyses: the first queries the public JaSaPaGe cohorts on the
+laptop, the second submits the visitor VCF to Yamatai's DDBJ Slurm site. Only the
+fixed demo workflows are available. The visitor VCF retains the existing 40 KB,
+biallelic GT-only validation. Use synthetic or public data on the venue HTTP
+network. The separate public website remains recorded playback.
+
+The host permits two simultaneous analyses, at most eight running/queued requests
+and 64 visitor sessions. Waiting requests emit an inspectable queue event; a full
+queue refuses approval without submitting work, and the visitor can retry.
+Credentials are checked again before execution/release. The usual narration,
+pause/resume, per-case resets, signature/tamper inspection and complete aggregate
+downloads remain available. Stopping narration stops automatic progression; it
+does not cancel a job already submitted to Slurm. Reset is refused while a job is
+running. Queue delays can extend the demonstration beyond three minutes.
+
+This service does not mount the operator cockpit, mail, general file access,
+production credentials or arbitrary task dispatch. The local presenter stage on
+8393 and cockpit on 8390 are unchanged. Its assets are served locally, so attendees
+do not need a CDN. Browser verification uses the bundled Ed25519 implementation,
+including on HTTP LAN origins.
+
+Installed laptop service: `systemctl --user status wasteland-public-demo`.
+Stop sharing with `systemctl --user stop wasteland-public-demo`.
+The Wi-Fi address on 16 September was `172.31.99.247`; it may change between venues.
+The venue network must allow communication between attendee devices and the host.
+
+Verify in a fresh browser (runs both analyses, including a real DDBJ job):
+
+```sh
+.venv/bin/python examples/public_live_demo.py \
+  --url http://127.0.0.1:8395/demo
+```
+
+The isolation/queue tests run locally without DDBJ:
+
+```sh
+.venv/bin/pytest -q tests/test_demo_public.py
+```
+
+### Public Internet access to the live laptop demo
+
+Public URL: **https://leechuck.de/wasteland-live/demo**. The second case is
+**https://leechuck.de/wasteland-live/demo/visitor**. Neither requires a login.
+This is live execution, separate from recorded playback at `/academic-wasteland/`.
+
+The laptop's private Wi-Fi address is not Internet-routable. The user service
+`wasteland-demo-tunnel.service` keeps an outbound SSH connection to lc2, binding a
+remote **loopback-only** port 8397 to laptop port 8395. Caddy terminates public
+HTTPS and forwards only `/wasteland-live/*` to that port. The demo runs with
+`--prefix /wasteland-live` so navigation, API calls, narration, evidence inspection
+and session cookies stay within that mount. The tunnel reconnects automatically.
+The laptop must remain awake and connected; this does not move computation to lc2.
+
+Anonymous session cookies isolate visitors; they are not an account/login
+requirement. HTTPS sets Secure, HttpOnly and SameSite=Strict on the scoped cookie.
+The two-compute-slot/eight-request limits continue to apply. The operator cockpit
+is not proxied. Stop public access with
+`systemctl --user stop wasteland-demo-tunnel`.
+
+Browser verification, including new local and DDBJ analyses:
+
+```sh
+.venv/bin/python examples/public_live_demo.py \
+  --url https://leechuck.de/wasteland-live/demo
+```
+
+## Third case: phenotypes to candidate genes
+
+Open https://leechuck.de/wasteland-live/demo/phenotypes (no login). Choose **Play
+narrated demo** for a short automatic walkthrough, or edit the phenotype labels
+and choose **Run my phenotype query**. Enter one label per line (semicolon separators
+also work). The selected Marfan example uses HPO ectopia lentis, arachnodactyly
+and aortic root aneurysm; FBN1 ranks third among 1,529 mouse profiles with the
+installed checkpoint. Its actual rank is displayed and its row highlighted.
+The expected gene is not sent to the scoring service. Narration waits for the real answer; Pause pauses
+presentation, Stop prevents further automatic steps, and Reset affects only
+this visitor's phenotype case. Already submitted inference continues.
+
+FAIRhaven supplies the published service description. Yamatai sends an actual
+registered-town request to Ubar's `phenotype-search` service. INDIGENA scores
+1,529 mouse gene profiles using the locally trained checkpoint; the top 20 are
+annotated with human orthologues from MGI. The model hash must match the FAIR
+record before results are displayed. These are research candidates, not a
+validated human diagnostic ranking; scores are not disease probabilities.
+
+Expand events and provenance to inspect requests, model and mapping digests,
+access requirements and the FAIR description. Download all 20 returned rows
+or the complete run evidence. The project-authored metadata and generated
+result tables are **CC BY 4.0**, credit **Academic Wasteland**. Upstream model,
+ontology and mapping data retain their own terms and are not relicensed.
+No clinical or IRB certification is invented for this public phenotype query.
+
+Browser verification (submits a real inference request):
+
+```sh
+.venv/bin/python examples/phenotype_live_demo.py --screenshot /tmp/indigena-demo.png
+```
+
+For manual INDIGENA use, edit the phenotype labels and click **Run my
+phenotype query**, the primary control. This executes a live query without
+starting narration. Once complete, edit and submit another query directly;
+the previous run is reset on submission. Download results you want to keep
+before rerunning. The narrated walkthrough remains a separate optional control.
+The browser check also verifies two consecutive edited queries, distinct run IDs
+and no audio playback.
+
+The phenotype case now optionally continues through Yamatai's private synthetic
+VCF, local REVEL/frequency reranking, and Ubar/Themis's evidence-based ACMG report.
+The option is enabled by default; uncheck it to run only the original gene query.
+[Workflow, privacy boundary, evidence sources and deployment](private-variant-demo.md).

@@ -103,6 +103,14 @@ class DashboardState:
         self.agentsview_url = AGENTSVIEW_URL
         self._stage = None
         self._cluster_stage = None
+        self._conversations = None
+
+    def conversations(self):
+        with self.lock:
+            if self._conversations is None:
+                from .conversations import CockpitConversations
+                self._conversations = CockpitConversations(self)
+            return self._conversations
 
     def demo_stage(self):
         with self.lock:
@@ -197,7 +205,7 @@ class DashboardState:
         # Historical exchanges remain visible even during outages or after a peer leaves.
         for message in self.log.list(limit=400):
             for name in (message["from"], message["to"]):
-                if name not in self.towns and name not in {"human", "external"}:
+                if name not in self.towns and name not in {"human", "external"} and not name.startswith("person_"):
                     peers.setdefault(name, {"name": name, "display": name, "kind": "federated", "last_seen": None,
                                             "recently_seen": False, "discovery_ok": False, "capabilities": [], "relay": None})
         return {"towns": sorted(peers.values(), key=lambda p: (not p["recently_seen"], p["name"])), "relays": relays}
@@ -472,6 +480,9 @@ class DashboardState:
             return {"ok": False, "error": str(error)}
         argv = [gc, *subcommand, "--city", str(town.city_root), *flags, "--", *positionals]
         env = {key: value for key, value in os.environ.items() if key != "OPENROUTER_API_KEY"}
+        provider_bin = Path.home() / ".opencode/bin"
+        if (provider_bin / "opencode").is_file():
+            env["PATH"] = str(provider_bin) + os.pathsep + env.get("PATH", "")
         try:
             result = self.runner(argv, capture_output=True, text=True, timeout=timeout, env=env, check=False)
         except subprocess.TimeoutExpired:
@@ -551,6 +562,11 @@ class DashboardState:
     def act(self, action: str, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
+        if action.startswith('conversations/'):
+            try:
+                return self.conversations().action(action.split('/', 1)[1], payload)
+            except (ValueError, OSError) as error:
+                raise ActionError(str(error)) from error
         if action.startswith(('demo/', 'demo-cluster/')):
             from .demo_stage import StageError
             try:
@@ -918,7 +934,15 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             try:
                 if not self._loopback():
                     return
-                if route == "/":
+                if route == '/conversations':
+                    import wasteland.conversations
+                    page = Path(wasteland.conversations.__file__).with_name('conversations.html').read_text().replace('__TOKEN_HEADER__', 'X-Cockpit-Token').replace('__TOKEN__', state.token)
+                    self._send(HTTPStatus.OK, page.encode(), 'text/html; charset=utf-8')
+                elif route == '/api/conversations':
+                    self._json(HTTPStatus.OK, state.conversations().snapshot(query.get('id', [None])[0]))
+                elif route == '/api/conversations/report':
+                    self._send(HTTPStatus.OK, state.conversations().report(query.get('id', [''])[0]), 'application/pdf')
+                elif route == "/":
                     page = HTML_PATH.read_text(encoding="utf-8").replace("__COCKPIT_TOKEN__", state.token).replace("__AGENTSVIEW_URL__", state.agentsview_url)
                     self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif route == "/demo":

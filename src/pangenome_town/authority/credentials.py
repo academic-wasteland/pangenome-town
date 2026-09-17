@@ -276,7 +276,7 @@ def verify_presentation(presentation: Any, task: Any, *, audience: str, anchors:
                 problems.append(f"accreditation {document.get('id')} malformed")
                 continue
             failures = _time_problems(document, moment)
-            status, status_problems = _status(document, status_checker, revocation) if status_checker else ("unchecked", [])
+            _status_value, status_problems = _status(document, status_checker, revocation) if status_checker else ("unchecked", [])
             failures.extend(status_problems)
             if failures:
                 problems.append(f"accreditation {document.get('id')}: {'; '.join(failures)}")
@@ -324,6 +324,8 @@ def verify_presentation(presentation: Any, task: Any, *, audience: str, anchors:
         check.problems.extend(_time_problems(document, moment))
         if check.holder != holder:
             check.problems.append("holder mismatch")
+        if subject.get("publicKey", subject.get("holderKey")) != subject.get("holderKey"):
+            check.problems.append("conflicting holder key aliases")
         if subject.get("holderKey") != holder_key_text:
             check.problems.append("holder key mismatch")
         check.status, status_problems = _status(document, status_checker, revocation)

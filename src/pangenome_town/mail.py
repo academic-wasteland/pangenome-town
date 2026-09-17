@@ -44,7 +44,17 @@ def body_for(envelope: Envelope) -> str:
     if region:
         lines.append(f"Region: {region}")
     lines.append("")
+    attribution = envelope.body.get('_conversation')
+    if attribution:
+        actor = attribution.get('actor', {})
+        lines.append(f"Person: {actor.get('display')} ({actor.get('id')}); attributed by {attribution.get('origin')}.")
+        lines.append("Attribution is not an identity credential or access grant.")
+        lines.append(f"Conversation: {attribution.get('id')}")
+        lines.append(f"Delegate with: pangenome-town send --conversation-parent {envelope.id} --to TOWN --resident AGENT --text 'task'")
     lines.append(envelope.text or "(no text)")
+    extra = {k: v for k, v in envelope.body.items() if k not in {'text', '_conversation', 'operation', 'resident'}}
+    if extra:
+        lines.extend(["", "Structured request data:", json.dumps(extra, indent=2)])
     if envelope.attachments:
         lines.append("")
         lines.append("Attachments:")
@@ -83,7 +93,7 @@ def send(town: TownConfig, envelope: Envelope, *, notify: bool = True, dry_run: 
 def send_to_resident(town: TownConfig, envelope: Envelope, resident: str) -> dict[str, Any]:
     """Deliver named-resident mail and require a real Gas City receipt (gc also names a Graphviz tool)."""
     body = body_for(envelope)
-    if resident in {'q', 'bloodninja', 'bloodninja_scout', 'phenomancer', 'sam', 'bob'}:
+    if resident in {'q', 'bloodninja', 'bloodninja_scout', 'phenomancer', 'themis', 'sam', 'bob'}:
         body = '\n'.join(line for line in body.splitlines() if not line.startswith('Answer with:'))
         body += (f'\nReply with: pangenome-town send --to {envelope.sender} --reply-to {envelope.id}'
                  ' --kind answer --text "your answer"\nThe gc mail ID is only the local delivery wrapper.\n'
@@ -97,7 +107,7 @@ def send_to_resident(town: TownConfig, envelope: Envelope, resident: str) -> dic
         raise MailError('Gas City did not return a JSON delivery receipt; check PT_GC_BIN') from None
     if result.returncode or not isinstance(receipt, dict) or receipt.get('ok') is not True or not receipt.get('id'):
         raise MailError('Gas City did not confirm resident delivery')
-    if resident in {"q", "bloodninja", "bloodninja_scout", "phenomancer", "sam", "bob"}:
+    if resident in {"q", "bloodninja", "bloodninja_scout", "phenomancer", "themis", "sam", "bob"}:
         # ACP connections belong to the supervisor process. A standalone gc
         # notification can queue mail without waking an otherwise idle agent.
         receipt["wake_requested"] = wake_resident(town, resident)

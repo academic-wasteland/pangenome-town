@@ -13,6 +13,7 @@ dependencies = [
   "cryptography>=43",
   "httpx>=0.27",
   "numpy>=1.26,<3",
+  "reportlab>=4,<5",
   "research-commons-conformance @ git+https://github.com/academic-wasteland/research-commons@receiver-assertions",
 ]
 

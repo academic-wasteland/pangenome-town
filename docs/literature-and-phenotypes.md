@@ -173,3 +173,85 @@ promote a later validation-selected checkpoint after completion gates pass.
 The unread-mail audit found one answered Bloodninja wrapper still unread and corrected
 it. No unhandled agent inbox messages remained in that audit. Seven human inbox
 messages were retained: four agent replies and three Dolt backup-health advisories.
+
+### Human orthologue annotations and the FAIR demo
+
+`phenotype-search` with `method: "indigena"` accepts optional
+`include_human_orthologues: true`. It preserves the original mouse gene order
+and scores, annotating rows with human symbols, HGNC IDs and NCBI gene IDs.
+Unmapped or conflicting mappings remain unannotated rather than dropping rows.
+The response includes the mapping source URL, retrieval date and SHA-256.
+
+Download MGI's `HOM_ProteinCoding.rpt` from
+https://www.informatics.jax.org/downloads/reports/HOM_ProteinCoding.rpt and prepare
+an operator-installed mapping:
+
+```sh
+python examples/prepare_orthologues.py HOM_ProteinCoding.rpt orthologues.json
+```
+
+Set `orthologues = "/absolute/path/to/orthologues.json"` under
+`[phenotype_search]` in the provider town configuration and restart its bridge.
+The preparation tool rejects unexpected columns and excludes conflicting human
+mappings; duplicate mouse NCBI aliases with identical human mappings collapse.
+These are orthologue annotations of a mouse-trained ranking, not human-model
+validation or clinical evidence.
+
+Public narrated demo: https://leechuck.de/wasteland-live/demo/phenotypes.
+Service description: `urn:wasteland:fair:ubar:indigena` in
+https://leechuck.de/wasteland-fair/. The demo pins its FAIR description and checks
+the actual model hash on every run. CC BY 4.0 covers project-authored demo
+metadata and generated result tables, credit Academic Wasteland; it does not
+relicense upstream inputs, software or model weights.
+
+### HPO/MP label lookup and a tested gene-prioritization example
+
+The service accepts labels and exact synonyms in `phenotypes`, as well as the
+existing IDs. Generate an index from the **same uPheno release used for training**:
+
+```sh
+python -m pangenome_town.phenotype_labels /path/to/data/upheno.owl /path/to/data/phenotype-labels.json
+```
+
+The default index is `phenotype-labels.json` in `[phenotype_search].data`;
+`labels` can override the path. The installed 2025-07-21 release indexes 32,897
+non-obsolete HPO/MP terms. Case and whitespace are normalized. Only exact labels
+and exact synonyms resolve automatically. Ambiguous labels return the matching
+IDs; choose an ID or use `HPO: Arachnodactyly` / `MP: arachnodactyly`. Unknown
+labels return suggestions, never silently inferred IDs. Each successful result
+includes label-resolution evidence, release IRI and source ontology SHA-256.
+Model coverage is checked after resolution; recognized terms absent from the
+trained embeddings still return an explicit error.
+
+Example request to Ubar's `phenotype-search`:
+
+```json
+{"phenotypes":["HPO: Ectopia lentis","HPO: Arachnodactyly","HPO: Aortic root aneurysm"],"method":"indigena","limit":20,"include_human_orthologues":true}
+```
+
+The association of these features with **FBN1-related Marfan syndrome** is
+supported by [GeneReviews](https://www.ncbi.nlm.nih.gov/books/NBK1335/).
+The current epoch-90 model ranks the mouse Fbn1 profile (MGI:95489), annotated
+with human FBN1, **third of 1,529**. Labels and their equivalent IDs produce
+identical scores and ordering. No expected gene, disease name or rank override
+enters model inference. The demo displays this comparison only for exactly this
+resolved phenotype set; arbitrary visitor queries get the ordinary ranking.
+
+This case was selected after inspecting several known disease profiles. It is
+a reproducible demonstration, **not** a held-out clinical accuracy estimate.
+The model is unchanged: generic neurological terms do not uniquely identify a
+gene, and this model does not put every disease's associated gene near the top.
+Human symbols remain orthologue annotations of mouse-gene scores.
+
+Reproduce the real-model rank regression (fails if FBN1 falls outside the top 5):
+
+```sh
+OPENBLAS_NUM_THREADS=2 python examples/indigena_rank_check.py /path/to/indigena/data
+python examples/phenotype_live_demo.py
+```
+
+The browser test executes the public narrated example, label-based manual
+inference, and a second MP query. It checks nonempty rankings, the measured FBN1
+rank, ontology resolution, downloadable evidence and independent visitor state.
+Provider lookup errors are displayed explicitly rather than hidden behind a
+generic unsuccessful-analysis message.
