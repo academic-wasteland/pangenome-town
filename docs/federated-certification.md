@@ -213,3 +213,11 @@ The development container is a test fixture, not a production Keycloak deploymen
 Official references: [OIDC endpoints and introspection](https://www.keycloak.org/securing-apps/oidc-layers),
 [Keycloak groups and service accounts](https://www.keycloak.org/docs/latest/server_admin/),
 [container deployment](https://www.keycloak.org/server/containers).
+
+## Relay holder issuance and signed status
+
+Camelot now accepts holder-proved applications over the federation relay and returns
+issuer-signed, short-lived status statements. Approval remains a local human
+action requiring `--evidence-ref` for relay applications. See the
+[starter credential guide](https://github.com/academic-wasteland/wasteland-starter-pack/blob/main/docs/credentials.md)
+for the wire format, client, private review audit and fail-closed verifier.

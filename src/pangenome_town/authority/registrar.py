@@ -155,8 +155,8 @@ class Registry:
             raise RegistryError(f"holder key: {error}") from error
         if not isinstance(subject_fields, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in subject_fields.items()):
             raise RegistryError("subject_fields must map strings to strings")
-        if {"id", "holderKey"} & set(subject_fields):
-            raise RegistryError("subject_fields may not set id or holderKey")
+        if {"id", "holderKey", "publicKey", "roles"} & set(subject_fields):
+            raise RegistryError("subject_fields may not set identity/key/roles fields")
         if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 2000:
             raise RegistryError("purpose must be a non-empty string of at most 2000 characters")
         app_id = f"app-{uuid.uuid4().hex[:8]}"
@@ -174,16 +174,28 @@ class Registry:
         records = [_read(path) for path in sorted((self.root / "applications").glob("app-*.json"))]
         return [record for record in records if state is None or record["state"] == state]
 
-    def approve(self, app_id: str, *, valid_days: int = 30, decided_by: str) -> dict[str, Any]:
+    def approve(self, app_id: str, *, valid_days: int = 30, decided_by: str, evidence_ref: str | None = None) -> dict[str, Any]:
         record = self.application(app_id)
         if record is None:
             raise RegistryError(f"unknown application {app_id}")
         if record["state"] != "pending":
             raise RegistryError(f"application {app_id} is {record['state']}, not pending")
+        if type(valid_days) is not int or not 1 <= valid_days <= 365 or not decided_by:
+            raise RegistryError("reviewer and validity of 1–365 days required")
+        if record.get('relay_sender') and not (isinstance(evidence_ref, str) and evidence_ref.strip()):
+            raise RegistryError('relay application requires manual review with --evidence-ref')
         issuer = self.issuer(record["issuer"])
         if issuer is None:
             raise RegistryError(f"issuer {record['issuer']} disappeared")
-        subject = {**record["subject_fields"], "id": record["holder"], "holderKey": record["holder_key"], "purpose": record["purpose"]}
+        subject = {**record["subject_fields"], "id": record["holder"], "holderKey": record["holder_key"], "publicKey": record["holder_key"], "purpose": record["purpose"]}
+        if record['credential_type'] == 'Qualification' and subject.get('qualification'):
+            subject['roles'] = [subject['qualification']]
+        if evidence_ref:
+            audit = self.key_dir / 'reviews' / (app_id + '.json')
+            audit.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _write(audit, {'application': app_id, 'reviewer': decided_by, 'evidence_ref': evidence_ref,
+                           'reviewed_at': _now(), 'approved_subject': subject, 'valid_days': valid_days})
+            os.chmod(audit, 0o600)
         document = credmod.issue(issuer=issuer["id"], issuer_key=self._key(record["issuer"]), types=record["credential_type"],
                                  subject=subject, valid_days=valid_days)
         _write(self.root / "credentials" / f"{_token(document['id'])}.json", document)

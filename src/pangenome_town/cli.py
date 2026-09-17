@@ -162,6 +162,7 @@ def parser() -> argparse.ArgumentParser:
     show.add_argument("id")
     approve = authority_commands.add_parser("approve", help="HUMAN DECISION: issue the credential an application asks for")
     approve.add_argument("application")
+    approve.add_argument("--evidence-ref", help="Private reference to manually reviewed evidence (required for relay applications)")
     approve.add_argument("--valid-days", type=int, default=30)
     approve.add_argument("--decided-by", help="IRI of the deciding human (default: [authority].operator)")
     deny = authority_commands.add_parser("deny", help="HUMAN DECISION: deny an application")
