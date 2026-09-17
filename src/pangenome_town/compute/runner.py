@@ -109,8 +109,9 @@ class SemanticGate:
         elif target_reasoner is not None and hasattr(target_reasoner, "validate"):
             result = target_reasoner.validate(rcp_task)
             status = result.get("status") if isinstance(result, dict) else str(result)
-        elif target_reasoner is not None and hasattr(target_reasoner, "classify") and hasattr(target_reasoner, "gate_status"):
-            status = getattr(target_reasoner, "gate_status", "indeterminate")
+        elif target_reasoner is not None and hasattr(target_reasoner, "classify"):
+            report = SemanticValidator(target_manifest, target_reasoner).validate(rcp_task)
+            status = report.get("status", "unknown")
         else:
             active_reasoner = target_reasoner or KMRunner()
             validator = SemanticValidator(target_manifest, active_reasoner)

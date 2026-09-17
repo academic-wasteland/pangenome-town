@@ -46,8 +46,9 @@ def _extract_inputs(
                     or ds.get("downloadUrl")
                     or (storage_map.get(ds_id) if ds_id else None)
                 )
+                path = ds.get("path")
                 if isinstance(url, str) and url.startswith(("http://", "https://", "s3://", "file://")):
-                    add_input(url)
+                    add_input(url, path)
             elif isinstance(ds, str):
                 url = storage_map.get(ds) or (ds if ds.startswith(("s3://", "file://")) else None)
                 if url:

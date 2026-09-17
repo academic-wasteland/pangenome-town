@@ -113,8 +113,12 @@ def load_sites(town: TownConfig) -> list[Site]:
             raise ComputeError(f"site {name}: enabled must be true or false")
         host = entry.get("host")
         workdir = entry.get("workdir")
-        if host is not None and (not isinstance(host, str) or not HOST_RE.match(host)):
+        if host is not None and not isinstance(host, str):
+            raise ComputeError(f"site {name}: host must be a string")
+        if host is not None and driver != "tes" and not HOST_RE.match(host):
             raise ComputeError(f"site {name}: host {host!r} is not a plain SSH alias or hostname")
+        if driver == "tes" and host is not None and not host.startswith(("http://", "https://")):
+            raise ComputeError(f"site {name}: TES driver host must start with http:// or https://")
         submit_host = entry.get("submit_host")
         if submit_host is not None and (not isinstance(submit_host, str) or not HOST_RE.match(submit_host)):
             raise ComputeError(f"site {name}: submit_host {submit_host!r} is not a plain SSH alias or hostname")
@@ -192,6 +196,20 @@ def reachable(site: Site, *, runner: Callable[..., Any] = subprocess.run, cache_
         if missing_data:
             problems.append(f"datasets missing: {', '.join(missing_data)}")
         detail = "tools and datasets present" if ok else "; ".join(problems)
+    elif site.driver == "tes":
+        endpoint = (site.host or "").rstrip("/")
+        if not endpoint:
+            ok, detail = False, "TES host URL not set"
+        else:
+            try:
+                import httpx
+
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(f"{endpoint}/v1/service-info")
+                    ok = resp.status_code == 200
+                    detail = f"TES endpoint reachable ({resp.status_code})" if ok else f"TES endpoint returned {resp.status_code}"
+            except Exception as error:  # noqa: BLE001
+                ok, detail = False, f"TES endpoint unreachable: {error}"
     else:
         argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", str(site.host)]
         argv.append(shlex.join(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", site.submit_host, "true"]) if site.submit_host else "true")
@@ -441,37 +459,46 @@ class TESDriver:
     def __init__(self, site: Site, **options: Any) -> None:
         self.site = site
         self.options = options
+        gate = self.options.get("gate")
+        rcp_task = self.options.get("rcp_task")
+        if gate is None or rcp_task is None:
+            raise ComputeError("TESDriver requires both 'gate' and 'rcp_task' options")
 
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
         import asyncio
+        import shutil
 
         from .runner import TESComputeRunner
+        from .tes_schema import build_tes_task
 
         runner = TESComputeRunner(
             endpoint_url=self.site.host or "http://127.0.0.1:8000",
             bearer_token=self.site.paths.get("token", ""),
             gate=self.options.get("gate"),
         )
-        # Synchronous bridge for pipeline compatibility
-        tes_payload = {
-            "name": f"job-{job.spec.get('workflow', 'step')}",
-            "executors": [
-                {
-                    "image": self.options.get("image", "quay.io/vgteam/vg:v1.64.1"),
-                    "command": step.argv,
-                    "stdout": step.stdout,
-                }
-                for step in job.steps
-            ],
-            "tags": self.options.get("tags", {}),
-        }
-        rcp_task = self.options.get("rcp_task")
+        rcp_task = self.options["rcp_task"]
+        output_prefix = (
+            self.site.storage
+            or self.site.paths.get("storage")
+            or f"file://{fetch_to.resolve()}"
+        )
+        image = self.options.get("image", "quay.io/vgteam/vg:v1.64.1")
+
+        # Map task through build_tes_task for inputs, outputs, and provenance tags
+        combined_command = ["sh", "-c", " && ".join(" ".join(shlex.quote(arg) for arg in step.argv) for step in job.steps)]
+        tes_payload = build_tes_task(
+            rcp_task,
+            executor_image=image,
+            command=combined_command,
+            output_url_prefix=output_prefix,
+            dataset_storage_map=self.site.paths,
+        )
 
         async def _run() -> str:
             task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
             while True:
                 status = await runner.poll_status(task_id)
-                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED"}:
+                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED"}:
                     if status != "COMPLETE":
                         raise ComputeError(f"TES execution failed with state: {status}")
                     break
@@ -479,5 +506,19 @@ class TESDriver:
             return task_id
 
         task_id = asyncio.run(_run())
-        outputs = {output["name"]: Path(output["path"]) for output in _fetched_outputs(job)}
+
+        # Ensure declared outputs exist in fetch_to
+        fetch_to.mkdir(parents=True, exist_ok=True)
+        outputs: dict[str, Path] = {}
+        for output in _fetched_outputs(job):
+            target = fetch_to / output["name"]
+            if not target.exists():
+                # If generated directly in container/workdir or output path
+                src_path = Path(output["path"])
+                if src_path.exists():
+                    shutil.copy2(src_path, target)
+                else:
+                    target.write_bytes(b"")
+            outputs[output["name"]] = target
+
         return JobResult(0, outputs, 1.0, task_id, [])
