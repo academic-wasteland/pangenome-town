@@ -1072,7 +1072,7 @@ wheels = [
 [[package]]
 name = "wasteland-starter-pack"
 version = "0.1.0"
-source = { git = "https://github.com/academic-wasteland/wasteland-starter-pack#2016d26cc91741334bd48c1dbe24e99ddbf55afe" }
+source = { git = "https://github.com/academic-wasteland/wasteland-starter-pack#12ab8aed94947334f14bc35029af167771d5f253" }
 
 [[package]]
 name = "wcwidth"

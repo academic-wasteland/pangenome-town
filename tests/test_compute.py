@@ -527,6 +527,12 @@ tools = ["bcftools"]
 # Semantic Gating (ADR 0001) & TES Runner tests --------------------------------------------------
 
 
+@pytest.fixture
+def trusted_manifest(towns, tmp_path):
+    from pangenome_town.rcp import contract
+    return contract.render(towns["ubar"], tmp_path / "contract")
+
+
 @pytest.mark.parametrize(
     ("reasoner_status", "should_pass"),
     [
@@ -537,7 +543,7 @@ tools = ["bcftools"]
         ("indeterminate", False),
     ],
 )
-def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass):
+def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass, trusted_manifest):
     class MockKMReasoner:
         name = "mock_km"
         version = "1.0"
@@ -545,7 +551,7 @@ def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass):
         def evaluate_gate(self, rcp_task, manifest=None):
             return reasoner_status
 
-    gate = SemanticGate(reasoner=MockKMReasoner())
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=MockKMReasoner())
     sample_rcp_task = {
         "@context": "https://w3id.org/research-commons/v0.1/",
         "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
@@ -572,6 +578,42 @@ def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass):
 
         with pytest.raises(SemanticPolicyError):
             dispatch_action(sample_rcp_task)
+
+
+def test_semantic_gate_decorator_fails_closed_without_task(trusted_manifest):
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=MockKMReasoner())
+
+    @gate
+    def run_without_task(x, y):
+        return x + y
+
+    with pytest.raises(SemanticPolicyError, match="no recognizable RCP task"):
+        run_without_task(1, 2)
+
+
+def test_semantic_gate_requires_trusted_manifest():
+    class MockKMReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(reasoner=MockKMReasoner())
+    sample_rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
+        "@type": ["ResearchTask", "RegionExtractionTask"],
+    }
+    with pytest.raises(SemanticPolicyError, match="without a trusted contract manifest"):
+        gate.evaluate(sample_rcp_task)
 
 
 def test_build_tes_task_schema_mapping():
@@ -689,6 +731,9 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
         town = dataclasses.replace(town, graph=dummy_graph)
 
     # 1. Setup mock reasoner strictly returning 'entailed'
+    from pangenome_town.rcp import contract
+    manifest = contract.render(town, tmp_path / "contract")
+
     class EntailedReasoner:
         name = "mock_km"
         version = "1.0"
@@ -696,12 +741,12 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
         def evaluate_gate(self, rcp_task, manifest=None):
             return "entailed"
 
-    gate = SemanticGate(reasoner=EntailedReasoner())
+    gate = SemanticGate(manifest=manifest, reasoner=EntailedReasoner())
 
     # 2. Build VG chunk operation task
     tools = graph.GraphTools(town)
     region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
-    tes_payload = tools.build_tes_chunk_task(region)
+    tes_payload, rcp_task = tools.build_tes_chunk_task(region, manifest=manifest)
 
     # 3. Assert build_tes_task generated executors with vg image and command
     assert len(tes_payload["executors"]) == 1
@@ -709,18 +754,15 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
     assert executor["image"] == "quay.io/vgteam/vg:latest"
     assert executor["command"][0] == "vg"
     assert executor["command"][1] == "chunk"
+    assert executor["stdout"].endswith(".vg")
+    assert tes_payload["outputs"][0]["url"].endswith(".vg")
 
     # 4. Pass semantic gate
-    rcp_task_mock = {
-        "@context": "https://w3id.org/research-commons/v0.1/",
-        "@id": tes_payload["tags"]["rcp_id"],
-        "@type": ["ResearchTask", "RegionExtractionTask"],
-    }
-    assert gate.evaluate(rcp_task_mock) == "entailed"
+    assert gate.evaluate(rcp_task) == "entailed"
 
     # 5. Mock HTTP endpoint
     endpoint = "https://tes.service.org"
-    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token="mock-token")
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token="mock-token", gate=gate)
 
     with respx.mock(base_url=endpoint) as respx_mock:
         post_route = respx_mock.post("/v1/tasks").respond(
@@ -732,11 +774,157 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
             json={"id": "mock-tes-id", "state": "COMPLETE"},
         )
 
-        task_id = await runner.dispatch(tes_payload)
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert task_id == "mock-tes-id"
         assert post_route.called
 
         final_state = await runner.poll_status(task_id)
         assert final_state == ComputeState.COMPLETE.value
         assert get_route.called
+
+
+@pytest.mark.asyncio
+async def test_tes_local_http_endpoint_integration(towns, tmp_path):
+    """Real local HTTP TES test endpoint exercising submission, state transitions,
+
+    exact-task semantic gating, and receipt artifacts without mocks.
+    """
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from typing import Any
+
+    from pangenome_town.rcp import contract
+    from pangenome_town.tools import graph
+
+    town = towns["ubar"]
+    if not town.has_graph:
+        dummy_graph = tmp_path / "toy.gbz"
+        dummy_graph.write_bytes(b"dummy gbz content")
+        town = dataclasses.replace(town, graph=dummy_graph)
+
+    manifest = contract.render(town, tmp_path / "contract")
+
+    # Local in-memory stateful TES HTTP server
+    tasks_db: dict[str, dict[str, Any]] = {}
+    auth_token = "test-secret-token-12345"
+
+    class LocalTESHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass  # suppress console logs during test
+
+        def do_POST(self):
+            if self.path == "/v1/tasks":
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer {auth_token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                payload = json.loads(body.decode("utf-8"))
+
+                task_id = f"task-{len(tasks_db) + 1}"
+                tasks_db[task_id] = {
+                    "id": task_id,
+                    "state": "QUEUED",
+                    "payload": payload,
+                    "poll_count": 0,
+                    "outputs": payload.get("outputs", []),
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"id": task_id}).encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_GET(self):
+            if self.path.startswith("/v1/tasks/"):
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer {auth_token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+
+                task_id = self.path.split("/v1/tasks/")[1]
+                if task_id in tasks_db:
+                    task_info = tasks_db[task_id]
+                    # Advance state transition on poll: QUEUED -> RUNNING -> COMPLETE
+                    task_info["poll_count"] += 1
+                    if task_info["poll_count"] == 1:
+                        task_info["state"] = "RUNNING"
+                    elif task_info["poll_count"] >= 2:
+                        task_info["state"] = "COMPLETE"
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    response_data = {
+                        "id": task_id,
+                        "state": task_info["state"],
+                        "outputs": task_info["outputs"],
+                    }
+                    self.wfile.write(json.dumps(response_data).encode("utf-8"))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    server = HTTPServer(("127.0.0.1", 0), LocalTESHandler)
+    port = server.server_address[1]
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    endpoint = f"http://127.0.0.1:{port}"
+
+    try:
+        class EntailedReasoner:
+            name = "mock_km"
+            version = "1.0"
+
+            def evaluate_gate(self, rcp_task, manifest=None):
+                return "entailed"
+
+        gate = SemanticGate(manifest=manifest, reasoner=EntailedReasoner())
+        runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=auth_token, gate=gate)
+
+        tools = graph.GraphTools(town)
+        region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
+        tes_payload, rcp_task = tools.build_tes_chunk_task(region, manifest=manifest)
+
+        # 1. Negative test: Modified rcp_task causes digest mismatch, gate blocks submission before network call
+        tampered_rcp_task = dict(rcp_task)
+        tampered_rcp_task["name"] = "Tampered Task Name"
+        initial_tasks_count = len(tasks_db)
+        with pytest.raises(SemanticPolicyError, match="TES dispatch digest mismatch"):
+            await runner.dispatch(tes_payload, rcp_task=tampered_rcp_task)
+        assert len(tasks_db) == initial_tasks_count
+
+        # 2. Positive test: Exact-task pass gate, dispatch to real local HTTP TES endpoint
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+        assert task_id in tasks_db
+        assert tasks_db[task_id]["state"] == "QUEUED"
+
+        # 3. State transitions via polling
+        state_1 = await runner.poll_status(task_id)
+        assert state_1 == ComputeState.RUNNING.value
+
+        state_2 = await runner.poll_status(task_id)
+        assert state_2 == ComputeState.COMPLETE.value
+
+        # 4. Check receipt artifacts
+        receipt = tasks_db[task_id]
+        assert receipt["id"] == task_id
+        assert receipt["payload"]["name"] == tes_payload["name"]
+        assert len(receipt["outputs"]) == 1
+        assert receipt["outputs"][0]["url"].endswith(".vg")
+
+    finally:
+        server.shutdown()
+        server.server_close()
 

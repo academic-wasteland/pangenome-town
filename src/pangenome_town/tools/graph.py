@@ -151,13 +151,28 @@ class GraphTools:
         region: Region,
         executor_image: str = "quay.io/vgteam/vg:latest",
         container_graph_path: str = "/container/input/graph.gbz",
-    ) -> dict[str, Any]:
-        """Build a GA4GH TES v1.1 task definition for a vg chunk operation."""
+        graph_url: str | None = None,
+        output_url_prefix: str | None = None,
+        manifest: Any = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build a GA4GH TES v1.1 task definition and matching RCP task for a vg chunk operation.
+
+        Returns (tes_task_payload, rcp_task).
+
+        - vg chunk writes single-region extraction to stdout; executor stdout is directed to
+          /container/output/{stem}.vg.
+        - The input URL can be explicitly provided (e.g. S3/HTTP) or defaults to file:// of local graph.
+        - Outputs contain compliant URLs.
+        - The RCP task populates semanticContract and ontologyProfile when a manifest is provided or
+          rendered for the town.
+        """
         from ..compute.tes_schema import build_tes_task
+        from ..rcp import contract
 
         graph_path = self._require_graph()
         path_name = self.town.reference_path(region.assembly, region.chrom)
         stem = f"chunk_{region.chrom}_{region.start}_{region.end}"
+        output_path = f"/container/output/{stem}.vg"
         command = [
             "vg",
             "chunk",
@@ -167,27 +182,53 @@ class GraphTools:
             f"{path_name}:{region.start}-{max(region.end - 1, region.start)}",
             "-c",
             "0",
-            "-b",
-            f"/container/output/{stem}",
         ]
-        rcp_task = {
+
+        # Resolve manifest for semanticContract and ontologyProfile if available
+        contract_id = None
+        bundle_digest = None
+        if manifest is not None:
+            contract_id = getattr(manifest, "id", None)
+            bundle_digest = getattr(manifest, "bundle_digest", None)
+        else:
+            try:
+                rendered_manifest = contract.render(self.town, self.town.city_root / "contract")
+                contract_id = rendered_manifest.id
+                bundle_digest = rendered_manifest.bundle_digest
+            except (OSError, ValueError):
+                pass
+
+        resolved_graph_url = graph_url or f"file://{graph_path}"
+        rcp_task: dict[str, Any] = {
             "@context": "https://w3id.org/research-commons/v0.1/",
             "@id": f"urn:uuid:vg-chunk-{region.chrom}-{region.start}-{region.end}",
             "@type": ["ResearchTask", "RegionExtractionTask"],
             "inputs": [
                 {
-                    "url": f"file://{graph_path}",
+                    "url": resolved_graph_url,
                     "path": container_graph_path,
                 }
             ],
             "outputs": [
                 {
                     "name": f"{stem}.vg",
-                    "path": f"/container/output/{stem}.vg",
+                    "path": output_path,
                 }
             ],
         }
-        return build_tes_task(rcp_task, executor_image=executor_image, command=command)
+        if contract_id:
+            rcp_task["semanticContract"] = contract_id
+        if bundle_digest:
+            rcp_task["ontologyProfile"] = bundle_digest
+
+        tes_payload = build_tes_task(
+            rcp_task,
+            executor_image=executor_image,
+            command=command,
+            output_url_prefix=output_url_prefix,
+            stdout=output_path,
+        )
+        return tes_payload, rcp_task
 
     def summary(self, *, refresh: bool = False) -> dict[str, Any]:
         """Whole-graph statistics. Slow on a full human pangenome (minutes), so cached per graph fingerprint."""

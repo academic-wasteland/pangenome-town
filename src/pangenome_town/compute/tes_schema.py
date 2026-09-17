@@ -53,18 +53,37 @@ def _extract_inputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
     return inputs
 
 
-def _extract_outputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract expected outputs from an RCP ResearchTask and map to TES outputs."""
+def _extract_outputs(
+    rcp_task: dict[str, Any],
+    output_url_prefix: str | None = None,
+) -> list[dict[str, Any]]:
+    """Extract expected outputs from an RCP ResearchTask and map to TES outputs.
+
+    GA4GH TES v1.1 requires both `path` and `url` for output files/directories.
+    If an explicit `url` is not provided in the task output specification, `output_url_prefix`
+    or task-level `outputBaseUrl` or a default destination URI (`file://` container target)
+    is applied so outputs are schema-conformant.
+    """
     outputs: list[dict[str, Any]] = []
     seen: set[str] = set()
+    base_url = (
+        output_url_prefix
+        or rcp_task.get("outputBaseUrl")
+        or rcp_task.get("output_url_prefix")
+    )
 
     def add_output(path: str, url: str | None = None) -> None:
         if not path or path in seen:
             return
         seen.add(path)
-        out: dict[str, Any] = {"path": path}
-        if url:
-            out["url"] = url
+        if not url:
+            if base_url:
+                filename = os.path.basename(path)
+                url = f"{base_url.rstrip('/')}/{filename}"
+            else:
+                # Default conformant URL: file:// scheme targeting the output path
+                url = f"file://{path}"
+        out: dict[str, Any] = {"path": path, "url": url}
         outputs.append(out)
 
     # Check "outputs" or "hasOutput" in rcp_task
@@ -73,7 +92,7 @@ def _extract_outputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
         for item in task_outputs:
             if isinstance(item, dict):
                 path = item.get("path") or f"/container/output/{item.get('name', 'output')}"
-                url = item.get("url")
+                url = item.get("url") or item.get("downloadUrl")
                 add_output(path, url)
             elif isinstance(item, str):
                 path = item if item.startswith("/") else f"/container/output/{item}"
@@ -82,20 +101,31 @@ def _extract_outputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
     return outputs
 
 
-def build_tes_task(rcp_task: dict, executor_image: str, command: list[str]) -> dict:
+def build_tes_task(
+    rcp_task: dict[str, Any],
+    executor_image: str,
+    command: list[str],
+    output_url_prefix: str | None = None,
+    stdout: str | None = None,
+    stderr: str | None = None,
+) -> dict[str, Any]:
     """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
 
     Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
     """
     inputs = _extract_inputs(rcp_task)
-    outputs = _extract_outputs(rcp_task)
+    outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
 
-    executors = [
-        {
-            "image": executor_image,
-            "command": list(command),
-        }
-    ]
+    executor: dict[str, Any] = {
+        "image": executor_image,
+        "command": list(command),
+    }
+    if stdout:
+        executor["stdout"] = stdout
+    if stderr:
+        executor["stderr"] = stderr
+
+    executors = [executor]
 
     rcp_id = str(rcp_task.get("@id", ""))
     canonical_json = canonical(rcp_task)

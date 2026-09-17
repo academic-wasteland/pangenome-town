@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import hashlib
 import json
 import shutil
 import time
@@ -36,9 +37,12 @@ class ComputeState(str, Enum):
     QUEUED = "QUEUED"
     INITIALIZING = "INITIALIZING"
     RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
     COMPLETE = "COMPLETE"
     SYSTEM_ERROR = "SYSTEM_ERROR"
     CANCELED = "CANCELED"
+    CANCELING = "CANCELING"
+    PREEMPTED = "PREEMPTED"
     EXECUTOR_ERROR = "EXECUTOR_ERROR"
     UNKNOWN = "UNKNOWN"
 
@@ -47,10 +51,13 @@ TES_STATE_MAPPING: dict[str, ComputeState] = {
     "QUEUED": ComputeState.QUEUED,
     "INITIALIZING": ComputeState.INITIALIZING,
     "RUNNING": ComputeState.RUNNING,
+    "PAUSED": ComputeState.PAUSED,
     "COMPLETE": ComputeState.COMPLETE,
     "SYSTEM_ERROR": ComputeState.SYSTEM_ERROR,
     "CANCELED": ComputeState.CANCELED,
     "CANCELLED": ComputeState.CANCELED,
+    "CANCELING": ComputeState.CANCELING,
+    "PREEMPTED": ComputeState.PREEMPTED,
     "EXECUTOR_ERROR": ComputeState.EXECUTOR_ERROR,
     "UNKNOWN": ComputeState.UNKNOWN,
 }
@@ -131,8 +138,11 @@ class SemanticGate:
                     ):
                         rcp_task = arg
                         break
-            if rcp_task is not None:
-                self.evaluate(rcp_task)
+            if rcp_task is None:
+                raise SemanticPolicyError(
+                    "Semantic gating rejected execution: no recognizable RCP task provided to gated function"
+                )
+            self.evaluate(rcp_task)
             return fn(*args, **kwargs)
 
         return wrapper
@@ -151,17 +161,55 @@ class ComputeRunner:
 class TESComputeRunner(ComputeRunner):
     """GA4GH Task Execution Service (TES) v1.1 async compute client."""
 
-    def __init__(self, endpoint_url: str, bearer_token: str) -> None:
+    def __init__(
+        self,
+        endpoint_url: str,
+        bearer_token: str,
+        gate: SemanticGate | None = None,
+    ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
         self.bearer_token = bearer_token
+        self.gate = gate
         self.headers = {
             "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
 
-    async def dispatch(self, tes_task_payload: dict[str, Any]) -> str:
-        """Sends an HTTP POST to {endpoint_url}/v1/tasks. Returns the TES task id string."""
+    async def dispatch(
+        self,
+        tes_task_payload: dict[str, Any],
+        rcp_task: dict[str, Any] | None = None,
+    ) -> str:
+        """Sends an HTTP POST to {endpoint_url}/v1/tasks. Returns the TES task id string.
+
+        When a SemanticGate is configured or an rcp_task is provided, validates that the task
+        is semantically entailed and that the payload's rcp_digest matches the exact task.
+        """
+        if self.gate is not None:
+            if rcp_task is None:
+                raise SemanticPolicyError(
+                    "TES dispatch failed semantic gating: no source RCP task provided"
+                )
+            expected_digest = tes_task_payload.get("tags", {}).get("rcp_digest")
+            if expected_digest:
+                from ..exchange import canonical
+
+                canonical_bytes = canonical(rcp_task)
+                if isinstance(canonical_bytes, str):
+                    canonical_bytes = canonical_bytes.encode("utf-8")
+                actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
+                if actual_digest != expected_digest:
+                    raise SemanticPolicyError(
+                        f"TES dispatch digest mismatch: payload has {expected_digest}, "
+                        f"but task computed {actual_digest}"
+                    )
+            self.gate.evaluate(rcp_task)
+        elif rcp_task is not None:
+            raise SemanticPolicyError(
+                "TES dispatch received an RCP task but no SemanticGate is configured to evaluate it"
+            )
+
         url = f"{self.endpoint_url}/v1/tasks"
         async with httpx.AsyncClient() as client:
             try:
