@@ -51,6 +51,7 @@ class Site:
     partition: str | None = None
     storage: str | None = None
     output_url_prefix: str | None = None
+    allow_insecure_http: bool = False
     datasets: tuple[str, ...] = ()
     paths: dict[str, str] = field(default_factory=dict)
     token: str | None = None
@@ -130,6 +131,9 @@ def load_sites(town: TownConfig) -> list[Site]:
         workdir = entry.get("workdir")
         if host is not None and not isinstance(host, str):
             raise ComputeError(f"site {name}: host must be a string")
+        allow_insecure = entry.get("allow_insecure_http")
+        if allow_insecure is not None and not isinstance(allow_insecure, bool):
+            raise ComputeError(f"site {name}: allow_insecure_http must be true or false")
         if host is not None and driver != "tes" and not HOST_RE.match(host):
             raise ComputeError(f"site {name}: host {host!r} is not a plain SSH alias or hostname")
         if driver == "tes":
@@ -140,9 +144,6 @@ def load_sites(town: TownConfig) -> list[Site]:
             from urllib.parse import urlparse
             parsed_host = urlparse(host).hostname or ""
             is_loopback = parsed_host in {"localhost", "127.0.0.1", "::1"}
-            allow_insecure = entry.get("allow_insecure_http")
-            if allow_insecure is not None and not isinstance(allow_insecure, bool):
-                raise ComputeError(f"site {name}: allow_insecure_http must be true or false")
             if not is_loopback and not host.startswith("https://") and allow_insecure is not True:
                 raise ComputeError(f"site {name}: remote TES endpoints require HTTPS unless allow_insecure_http is true")
             if not workdir:
@@ -194,6 +195,7 @@ def load_sites(town: TownConfig) -> list[Site]:
             name=name, driver=driver, enabled=enabled, host=host, workdir=workdir, scheduler=scheduler,
             submit_host=submit_host, partition=partition, storage=entry.get("storage"),
             output_url_prefix=output_url_prefix,
+            allow_insecure_http=bool(allow_insecure),
             datasets=datasets, paths=paths, token=token, tools=tools,
             max_cpus=_positive_int(entry, "max_cpus", 4, name),
             max_mem_gb=_positive_int(entry, "max_mem_gb", 16, name),
@@ -520,17 +522,18 @@ class TESDriver:
             endpoint_url=self.site.host or "http://127.0.0.1:8000",
             bearer_token=self.site.token or "",
             gate=gate,
-            allow_insecure_http=bool(self.options.get("allow_insecure_http")),
+            allow_insecure_http=bool(self.site.allow_insecure_http or self.options.get("allow_insecure_http")),
         )
 
         output_prefix = (
             self.site.output_url_prefix
             or self.options.get("output_url_prefix")
         )
-        if not output_prefix or not output_prefix.startswith(("http://", "https://", "file://")):
-            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S) or file:// output storage URL (output_url_prefix)")
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "s3://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S), s3://, or file:// output storage URL (output_url_prefix)")
 
-        image = self.options.get("image", "quay.io/vgteam/vg:v1.64.1")
+        default_image = "quay.io/biocontainers/bcftools:1.21--h8b25389_0" if job.workflow in {"genotype-export", "allele-frequency"} else "quay.io/vgteam/vg:v1.64.1"
+        image = self.options.get("image", default_image)
 
         # Map inputs from job and datasets to declared container paths
         container_input_dir = "/container/input"
@@ -554,17 +557,18 @@ class TESDriver:
                 if isinstance(ds, dict) and ds.get("@id"):
                     ds_id = ds["@id"]
                     if ds.get("url"):
+                        clean_url = ds["url"].split("?")[0].split("#")[0]
                         dataset_storage_map[ds_id] = ds["url"]
-                        path_replacements[ds["url"]] = f"{container_input_dir}/{Path(ds['url']).name}"
+                        path_replacements[ds["url"]] = f"{container_input_dir}/{Path(clean_url).name}"
                     elif ds_id in self.site.paths:
                         dataset_storage_map[ds_id] = self.site.paths[ds_id]
                     else:
-                        # Fallback mapping from logical keys (e.g. vcf, graph)
-                        short_name = ds_id.rstrip("/").split("/")[-1]
-                        for candidate_key in (short_name, "vcf" if "vcf" in ds_id.lower() or "genotype" in ds_id.lower() else "graph"):
-                            if candidate_key in self.site.paths:
-                                dataset_storage_map[ds_id] = self.site.paths[candidate_key]
-                                break
+                        # Use the RCP type to choose the logical storage key.
+                        types = ds.get("@type", [])
+                        types = [types] if isinstance(types, str) else types
+                        candidate_key = "vcf" if any(str(value).endswith(("RestrictedDataset", "IndividualGenotypeData")) for value in types) else "graph"
+                        if candidate_key in self.site.paths:
+                            dataset_storage_map[ds_id] = self.site.paths[candidate_key]
 
         # Map steps with stdout handling and translate paths to container mount paths
         commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
@@ -671,7 +675,7 @@ class TESDriver:
             target = fetch_to / output["name"]
             if not target.exists():
                 src_path = Path(output["path"])
-                if src_path.exists():
+                if self.site.driver == "local" and src_path.exists():
                     shutil.copy2(src_path, target)
                 else:
                     # Download remote output URL if available

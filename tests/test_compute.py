@@ -557,6 +557,8 @@ def test_semantic_gate_five_valued_evaluation(reasoner_status, should_pass, trus
         "@id": "urn:uuid:11111111-2222-3333-4444-555555555555",
         "@type": ["ResearchTask", "RegionExtractionTask"],
         "name": "Test Task",
+        "semanticContract": trusted_manifest.id,
+        "ontologyProfile": trusted_manifest.bundle_digest,
     }
 
     if should_pass:
@@ -842,8 +844,12 @@ async def test_live_tes_opt_in_dispatch(monkeypatch):
     from pangenome_town.compute.runner import TESComputeRunner
 
     runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token)
-    service_info = await runner.poll_status("nonexistent-test-id")
-    assert service_info in {"UNKNOWN", "SYSTEM_ERROR", "NOT_FOUND"}
+    try:
+        service_info = await runner.poll_status("nonexistent-test-id")
+    except ComputeError as error:
+        assert "HTTP 404" in str(error)
+    else:
+        assert service_info in {"UNKNOWN", "SYSTEM_ERROR"}
 
 
 @pytest.mark.asyncio
@@ -1046,18 +1052,18 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         from pangenome_town.compute.sites import Site, TESDriver
         from pangenome_town.compute.workflows import RenderedJob, Step
 
+        dummy_out_file = tmp_path / "out_chunk.vg"
+        dummy_out_file.write_bytes(b"dummy graph bytes")
+
         tes_site = Site(
             name="tes_site",
             driver="tes",
             host=endpoint,
             token=auth_token,
             workdir="/tmp/tes-work",
-            output_url_prefix=f"{endpoint}/files",
+            output_url_prefix=f"file://{tmp_path.resolve()}",
             paths={"graph": "https://example.org/toy.gbz"},
         )
-
-        dummy_out_file = tmp_path / "out_chunk.vg"
-        dummy_out_file.write_bytes(b"dummy graph bytes")
 
         driver = TESDriver(
             tes_site,

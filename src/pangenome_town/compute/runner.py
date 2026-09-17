@@ -100,12 +100,12 @@ class SemanticGate:
 
         # Bind rcp_task contract declarations against trusted manifest
         task_contract = rcp_task.get("semanticContract")
-        if task_contract and task_contract != target_manifest.id:
+        if task_contract != target_manifest.id:
             raise SemanticPolicyError(
                 f"Semantic gating rejected task: semanticContract '{task_contract}' does not match trusted manifest id '{target_manifest.id}'"
             )
         task_profile = rcp_task.get("ontologyProfile")
-        if task_profile and task_profile != target_manifest.bundle_digest:
+        if task_profile != target_manifest.bundle_digest:
             raise SemanticPolicyError(
                 f"Semantic gating rejected task: ontologyProfile '{task_profile}' does not match trusted manifest bundleDigest '{target_manifest.bundle_digest}'"
             )
@@ -227,9 +227,9 @@ class TESComputeRunner(ComputeRunner):
         from urllib.parse import urlparse
         parsed = urlparse(self.endpoint_url)
         is_loopback = (parsed.hostname or "") in {"localhost", "127.0.0.1", "::1"}
-        if bearer_token and not is_loopback and parsed.scheme != "https" and not allow_insecure_http:
+        if not is_loopback and parsed.scheme != "https" and not allow_insecure_http:
             raise ComputeError(
-                f"TES endpoint '{self.endpoint_url}' requires HTTPS to transmit credentials unless allow_insecure_http is true"
+                f"TES endpoint '{self.endpoint_url}' requires HTTPS unless allow_insecure_http is true"
             )
 
         self.headers = {
@@ -341,6 +341,8 @@ class TESComputeRunner(ComputeRunner):
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return ComputeState.UNKNOWN.value
             raise ComputeError(
                 f"TES poll failed with HTTP {exc.response.status_code}: {exc.response.text}"
             ) from exc

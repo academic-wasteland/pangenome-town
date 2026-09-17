@@ -461,9 +461,23 @@ class Node:
             # Wire ADR 0001 semantic gate & task context into TES driver, reusing admission evidence
             manifest_path = self.town.city_root / "contract" / f"{self.town.name}.contract.json"
             manifest = contract.ContractManifest.load(manifest_path) if manifest_path.exists() else None
-            axioms = facts.axioms if facts else ()
-            probes = facts.probes if facts else None
-            gate_reasoner = lambda doc: self.validator.validate(doc, receiver_assertions=axioms, probes=probes) if self.validator else {"status": "indeterminate"}
+            axioms = list(facts.axioms) if facts else []
+            probes = list(facts.probes) if (facts and facts.probes) else []
+            # Forward complete standing, authority, and reachable site evidence
+            requester_iri = _iri(document.get("requestedBy"))
+            principal_iri = _iri(document.get("onBehalfOf")) or requester_iri
+            if requester_iri:
+                verdict_obj = reputation.judge(self.town, principal_iri or "urn:unknown", ledger=self.ledger)
+                assertions: list[Any] = verdict_obj.assertions() if requester_iri else []
+                if principal_iri and requester_iri and principal_iri != requester_iri:
+                    assertions.append((verdict_obj.class_iri, requester_iri))
+                axioms.extend(assertions)
+            heavy_task = controlled or task_class in LARGE_CLASSES
+            if heavy_task:
+                site_axioms, _ = capability.site_facts(self.town, reachable_fn=self.reachable_fn)
+                axioms.extend(site_axioms)
+                probes.append(("no-capability", f"{town_iri(self.town.name)}NoCapabilityTask"))
+            gate_reasoner = lambda doc, a=axioms, p=probes: self.validator.validate(doc, receiver_assertions=a, probes=p) if self.validator else {"status": "indeterminate"}
             driver = compute_runner.driver_for(site, gate=compute_runner.SemanticGate(manifest=manifest, reasoner=gate_reasoner), rcp_task=document)
         try:
             result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec,

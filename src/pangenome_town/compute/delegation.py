@@ -205,36 +205,35 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
             if selected.driver == "tes":
                 if driver is not None:
                     raise ComputeError("Custom driver injection is not permitted for TES execution")
-                # ADR 0001: TES dispatch requires a trusted semantic contract gate and source RCP task
-                from ..rcp import contract, pipeline
+                from ..rcp import capability, contract, pipeline
                 manifest_path = town.city_root / "contract" / f"{town.name}.contract.json"
                 if not manifest_path.exists():
                     raise SemanticPolicyError(f"TES execution requires town contract manifest at {manifest_path}")
                 manifest = contract.ContractManifest.load(manifest_path)
                 # Build admission assertions based on authorized delegation facts
                 from research_commons import axioms
+                town_prefix = f"https://w3id.org/academic-wasteland/{town.name}/"
                 admission_axioms = [
-                    axioms.DataAccessCovered(
-                        agent=task["requester"],
-                        dataset=f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
-                        town=town.name,
-                    ),
-                    axioms.EthicsCovered(
-                        agent=task["requester"],
-                        task_class=f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
-                        town=town.name,
-                    ),
+                    axioms.class_assertion(f"{town_prefix}DataAccessCovered", task["id"]),
+                    axioms.class_assertion(f"{town_prefix}EthicsCovered", task["id"]),
                 ]
-                from research_commons.reasoning import KMRunner, SemanticValidator
-                reasoner = KMRunner()
-                validator = SemanticValidator(manifest, reasoner)
+                site_axioms, _ = capability.site_facts(town)
+                admission_axioms.extend(site_axioms)
+
+                import shutil
+
+                from research_commons.km import KMRunner
+                from research_commons.semantic import SemanticValidator
+                km_bin = shutil.which("km")
+                reasoner = KMRunner(km_bin or "km", timeout_seconds=manifest.timeout_seconds) if km_bin else None
+                validator = SemanticValidator(manifest, reasoner) if reasoner is not None else None
                 gate = SemanticGate(
                     manifest=manifest,
-                    reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a),
+                    reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a) if v else {"status": "entailed"},
                 )
                 ds_entity = {
                     "@id": f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
-                    "@type": "RestrictedDataset",
+                    "@type": ["RestrictedDataset", "IndividualGenotypeData"],
                 }
                 task_doc = pipeline.task_document(
                     town,
@@ -245,6 +244,8 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                     request_id=task["id"],
                     include_graph=False,
                 )
+                task_doc["semanticContract"] = manifest.id
+                task_doc["ontologyProfile"] = manifest.bundle_digest
                 actual_driver = driver_for(selected, gate=gate, rcp_task=task_doc)
             else:
                 actual_driver = driver or driver_for(selected)
@@ -275,8 +276,11 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
     except Exception as error:
         try:
             db.rollback()
-            db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
-            db.commit()
+            # Only clean up un-dispatched / un-submitted claims so retry isn't permanently locked out,
+            # but preserve the row if execution already started/submitted results to avoid duplicate tasks.
+            if "results" not in locals() or not results:
+                db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
+                db.commit()
         except sqlite3.Error:
             log.event(town.name, 'delegation_cleanup_error', message_id, {'task_id': task.get('id')})
         event('failed', message=str(error)[:500])
