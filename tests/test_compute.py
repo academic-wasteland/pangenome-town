@@ -1151,6 +1151,38 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         with pytest.raises(ComputeError, match="must not contain embedded user credentials"):
             load_sites(bad_host_town)
 
+        # 8. Negative test: Output name with path traversal components rejected
+        traversal_job = RenderedJob(
+            workflow="region-extract",
+            steps=[
+                Step(id="step-1", argv=["vg", "chunk", "-x", "https://example.org/toy.gbz"], stdout="/tmp/work/123/out_chunk.vg")
+            ],
+            work_dir="/tmp/work/123",
+            outputs=[{"name": "../../evil.txt", "path": str(tmp_path / "evil.txt"), "class": "GraphSubgraphChunk", "release": False}],
+            resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
+        )
+        with pytest.raises(ComputeError, match="Invalid output name with path components"):
+            driver.run(traversal_job, fetch_to=fetch_dir)
+
+        # 9. Negative test: file:// output outside permitted root directories rejected
+        escaping_site = Site(
+            name="escaping_site",
+            driver="tes",
+            host=endpoint,
+            workdir="/tmp/tes-work",
+            token=auth_token,
+            output_url_prefix="file:///etc",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+        escaping_driver = TESDriver(
+            escaping_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix="file:///etc",
+        )
+        with pytest.raises(ComputeError, match="outside permitted directories"):
+            escaping_driver.run(job, fetch_to=fetch_dir)
+
     finally:
         server.shutdown()
         server.server_close()

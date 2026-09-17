@@ -551,6 +551,13 @@ class TESDriver:
                 self.site.allow_insecure_http or self.options.get("allow_insecure_http")
             ):
                 raise ComputeError(f"TES output destination '{output_prefix}' requires HTTPS unless allow_insecure_http is true")
+        if output_prefix.startswith("file://"):
+            local_dest = Path(output_prefix.removeprefix("file://")).resolve()
+            allowed_roots = [fetch_to.resolve(), Path("/tmp").resolve()]
+            if self.site.workdir:
+                allowed_roots.append(Path(self.site.workdir).resolve())
+            if not any(local_dest.is_relative_to(root) for root in allowed_roots):
+                raise ComputeError(f"file:// output destination {local_dest} is outside permitted directories")
 
         default_image = "quay.io/biocontainers/bcftools:1.21--h8b25389_0" if job.workflow in {"genotype-export", "allele-frequency"} else "quay.io/vgteam/vg:v1.64.1"
         image = self.options.get("image", default_image)
@@ -613,34 +620,57 @@ class TESDriver:
                             dataset_storage_map[ds_id] = self.site.paths[candidate_key]
 
         # Map steps with stdout handling and translate paths to container mount paths
+        # If the job has a single step and no complex output copy logic, use native command vectors directly;
+        # otherwise compose discrete shell execution safely.
         commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
+        single_direct_step = None
+        fetched = _fetched_outputs(job)
+
+        if len(job.steps) == 1 and not fetched:
+            # Single step without intermediate workdir-to-output copies can run natively
+            step = job.steps[0]
+            remapped_argv = []
+            for arg in step.argv:
+                remapped_arg = arg
+                for src_p, dst_p in path_replacements.items():
+                    if remapped_arg == src_p:
+                        remapped_arg = dst_p
+                    elif remapped_arg.startswith(src_p.rstrip("/") + "/"):
+                        remapped_arg = dst_p.rstrip("/") + "/" + remapped_arg[len(src_p.rstrip("/") + "/"):]
+                remapped_argv.append(remapped_arg)
+            if not step.stdout:
+                single_direct_step = remapped_argv
+
         for step in job.steps:
             remapped_argv = []
             for arg in step.argv:
                 remapped_arg = arg
                 for src_p, dst_p in path_replacements.items():
-                    if remapped_arg.startswith(src_p):
-                        remapped_arg = remapped_arg.replace(src_p, dst_p, 1)
+                    if remapped_arg == src_p:
+                        remapped_arg = dst_p
+                    elif remapped_arg.startswith(src_p.rstrip("/") + "/"):
+                        remapped_arg = dst_p.rstrip("/") + "/" + remapped_arg[len(src_p.rstrip("/") + "/"):]
                 remapped_argv.append(remapped_arg)
             cmd = " ".join(shlex.quote(arg) for arg in remapped_argv)
             if step.stdout:
                 stdout_path = step.stdout
                 for src_p, dst_p in path_replacements.items():
-                    if stdout_path.startswith(src_p):
-                        stdout_path = stdout_path.replace(src_p, dst_p, 1)
+                    if stdout_path == src_p:
+                        stdout_path = dst_p
+                    elif stdout_path.startswith(src_p.rstrip("/") + "/"):
+                        stdout_path = dst_p.rstrip("/") + "/" + stdout_path[len(src_p.rstrip("/") + "/"):]
                 cmd += f" > {shlex.quote(stdout_path)}"
             commands.append(cmd)
 
         # Ensure container output directory exists and copy outputs from /container/work to /container/output if needed
-        fetched = _fetched_outputs(job)
         if fetched:
             copy_cmds = [f"mkdir -p {container_output_dir}"]
             for out in fetched:
-                out_name = out["name"]
+                out_name = Path(out["name"]).name
                 copy_cmds.append(f"if [ -f {container_work_dir}/{shlex.quote(out_name)} ]; then cp {container_work_dir}/{shlex.quote(out_name)} {container_output_dir}/{shlex.quote(out_name)}; fi")
             commands.append(" && ".join(copy_cmds))
 
-        combined_command = ["sh", "-c", " && ".join(commands)]
+        combined_command = single_direct_step if single_direct_step is not None else ["sh", "-c", " && ".join(commands)]
 
         # Populate TES outputs from job.outputs with unique task namespace
         run_uuid = uuid.uuid4().hex[:12]
@@ -667,24 +697,35 @@ class TESDriver:
             resources=job.resources,
         )
 
-        poll_interval = 1.0
         wall_time = job.resources.get("wall_seconds", self.site.max_wall_seconds)
-        max_attempts = max(10, int(wall_time / poll_interval))
+        max_attempts = max(10, int(wall_time / 1.5))
 
         async def _run() -> str:
             task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
             if hasattr(self, "on_dispatched") and callable(self.on_dispatched):
                 self.on_dispatched()
-            # Poll with timeout derived from wall time
+            # Poll with adaptive backoff derived from wall time and consecutive checks
             attempts = 0
+            current_delay = 1.0
+            unknown_grace_count = 0
             while attempts < max_attempts:
                 attempts += 1
                 status = await runner.poll_status(task_id)
-                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED", "UNKNOWN"}:
+                if status == "UNKNOWN":
+                    # Allow transient UNKNOWN (e.g. initial replica lag) up to 3 times
+                    unknown_grace_count += 1
+                    if unknown_grace_count > 3:
+                        raise ComputeError(f"TES execution failed with state: {status}")
+                elif status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED", "PREEMPTED"}:
                     if status != "COMPLETE":
                         raise ComputeError(f"TES execution failed with state: {status}")
                     break
-                await asyncio.sleep(poll_interval)
+                else:
+                    unknown_grace_count = 0
+
+                await asyncio.sleep(current_delay)
+                # Adaptive backoff: ramp from 1.0s to a maximum of 8.0s
+                current_delay = min(8.0, current_delay * 1.5)
             else:
                 try:
                     await runner.cancel(task_id)
@@ -703,11 +744,17 @@ class TESDriver:
         try:
             import concurrent.futures
             # If an event loop is already running in this thread, execute in a separate worker thread
+            has_running_loop = False
             try:
-                asyncio.get_running_loop()
+                loop = asyncio.get_running_loop()
+                has_running_loop = loop.is_running()
+            except RuntimeError:
+                has_running_loop = False
+
+            if has_running_loop:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     task_id = pool.submit(asyncio.run, _execute_and_close()).result()
-            except RuntimeError:
+            else:
                 task_id = asyncio.run(_execute_and_close())
         except Exception as exc:
             if isinstance(exc, ComputeError):
@@ -717,22 +764,36 @@ class TESDriver:
 
         # Ensure declared outputs exist in fetch_to
         fetch_to.mkdir(parents=True, exist_ok=True)
+        resolved_fetch_to = fetch_to.resolve()
         outputs: dict[str, Path] = {}
         for output in _fetched_outputs(job):
-            target = fetch_to / output["name"]
+            # Guard against directory traversal attacks via output name
+            safe_name = Path(output["name"]).name
+            if safe_name != output["name"]:
+                raise ComputeError(f"Invalid output name with path components: {output['name']!r}")
+            target = (fetch_to / safe_name).resolve()
+            if not target.is_relative_to(resolved_fetch_to):
+                raise ComputeError(f"Output target path {target} escapes destination directory {fetch_to}")
+
             if not target.exists():
                 src_path = Path(output["path"])
                 if self.site.driver == "local" and src_path.exists():
                     shutil.copy2(src_path, target)
                 else:
                     # Download remote output URL if available
-                    out_url = f"{output_dest_prefix}/{output['name']}"
+                    out_url = f"{output_dest_prefix}/{safe_name}"
                     if out_url.startswith("file://"):
-                        local_src = Path(out_url.removeprefix("file://"))
+                        local_src = Path(out_url.removeprefix("file://")).resolve()
+                        # Strict jail: file:// outputs must reside under allowed state/work directories
+                        allowed_roots = [fetch_to.resolve(), Path("/tmp").resolve()]
+                        if self.site.workdir:
+                            allowed_roots.append(Path(self.site.workdir).resolve())
+                        if not any(local_src.is_relative_to(root) for root in allowed_roots):
+                            raise ComputeError(f"file:// output destination {local_src} is outside permitted directories")
                         if local_src.exists():
                             shutil.copy2(local_src, target)
                         else:
-                            raise ComputeError(f"TES output {output['name']} was not produced at {local_src}")
+                            raise ComputeError(f"TES output {safe_name} was not produced at {local_src}")
                     elif out_url.startswith(("http://", "https://")):
                         try:
                             from urllib.parse import urlparse

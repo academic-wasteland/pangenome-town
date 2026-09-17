@@ -299,10 +299,15 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
     except Exception as error:
         try:
             db.rollback()
-            # Only clean up un-dispatched / un-submitted claims so retry isn't permanently locked out,
-            # but preserve the row if execution already dispatched to avoid duplicate tasks.
+            # Only clean up un-dispatched / un-submitted claims so retry isn't permanently locked out.
+            # If execution was dispatched but failed/timed out, record a failure tombstone so
+            # future retries are aware of the prior failure without remaining as an unresolvable NULL lock.
             if not locals().get("dispatched_task", False):
                 db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
+                db.commit()
+            else:
+                fail_payload = json.dumps({"ok": False, "state": "failed", "error": str(error)[:500]})
+                db.execute('UPDATE executions SET result=? WHERE id=? AND result IS NULL', (fail_payload, task['id']))
                 db.commit()
         except sqlite3.Error:
             log.event(town.name, 'delegation_cleanup_error', message_id, {'task_id': task.get('id')})

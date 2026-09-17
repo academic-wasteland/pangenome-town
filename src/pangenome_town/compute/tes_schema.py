@@ -42,6 +42,7 @@ def _extract_inputs(
         inputs.append({
             "url": url,
             "path": target_path,
+            "type": "FILE",
         })
 
     # 1. usesDataset can contain entities with url, downloadUrl, or mapped storage
@@ -112,7 +113,7 @@ def _extract_outputs(
                     f"TES output '{path}' requires an explicit remote output destination url, "
                     "output_url_prefix, or outputBaseUrl"
                 )
-        out: dict[str, Any] = {"path": path, "url": url}
+        out: dict[str, Any] = {"path": path, "url": url, "type": "FILE"}
         outputs.append(out)
 
     # Check "outputs" or "hasOutput" in rcp_task
@@ -190,7 +191,6 @@ def build_tes_task(
     tags = {
         "rcp_id": rcp_id,
         "rcp_digest": rcp_digest,
-        "rcp_source_jsonld": canonical_json,
     }
 
     # Pass through existing tags if present
