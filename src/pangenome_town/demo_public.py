@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import secrets
 import threading
 import time
@@ -25,7 +26,10 @@ ASSETS = Path(__file__).parent
 
 class Visitors:
     def __init__(self, towns, storage, *, slots=2, max_sessions=64, max_pending=8,
-                 stage_factory=DemoStage, cluster_factory=ClusterStage):
+                 stage_factory=DemoStage, cluster_factory=ClusterStage, prefix=""):
+        if prefix and not re.fullmatch(r"/[a-z][a-z0-9-]*", prefix):
+            raise ValueError("prefix must be a single URL path component")
+        self.prefix = prefix
         self.towns = towns
         self.storage = Path(storage)
         self.semaphore = threading.BoundedSemaphore(slots)
@@ -106,7 +110,8 @@ def handler(visitors):
             self.send_header('Referrer-Policy', 'same-origin')
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
             if cookie:
-                self.send_header('Set-Cookie', f'wasteland_visitor={cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200')
+                secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' else ''
+                self.send_header('Set-Cookie', f'wasteland_visitor={cookie}; HttpOnly; SameSite=Strict; Path={visitors.prefix or "/"}; Max-Age=7200{secure}')
             self.end_headers()
             self.wfile.write(raw)
 
@@ -116,8 +121,21 @@ def handler(visitors):
             item = cookies.get('wasteland_visitor')
             return visitors.session(item.value if item else None, create=create)
 
-        def do_GET(self):
+        def route(self):
             path = urlsplit(self.path).path
+            if visitors.prefix and (path == visitors.prefix or path.startswith(visitors.prefix + '/')):
+                path = path[len(visitors.prefix):] or '/'
+            return path
+
+        def mounted(self, content):
+            if not visitors.prefix:
+                return content
+            content = content.replace('href="/"', 'href="' + visitors.prefix + '/demo"')
+            return re.sub(r"([\"'])(/(?:api|demo)(?=[/\"'-]))",
+                          lambda m: m[1] + visitors.prefix + m[2], content)
+
+        def do_GET(self):
+            path = self.route()
             try:
                 if path in ('/', '/demo', '/demo/visitor'):
                     session = self.visitor(create=True)
@@ -125,12 +143,13 @@ def handler(visitors):
                     page = (ASSETS / filename).read_text().replace('__COCKPIT_TOKEN__', session['token'])
                     page = page.replace('Open cockpit', 'Your live demo')
                     page = page.replace('<main>', '<main><p style="padding:10px 16px;background:#20382e;color:#d5f0df;border-radius:8px">Live visitor session · New analyses run on this laptop or DDBJ. Other visitors have separate runs. Approvals use isolated demo authorities. Use synthetic or public data only.</p>', 1)
-                    self.send(200, page.encode(), 'text/html; charset=utf-8', cookie=session['id'])
+                    self.send(200, self.mounted(page).encode(), 'text/html; charset=utf-8', cookie=session['id'])
                 elif path in ('/demo-assets/inspection.js', '/demo-assets/autorun.js', '/demo-assets/nacl-fast.min.js'):
                     asset = {'/demo-assets/inspection.js': 'demo_inspection.js',
                              '/demo-assets/autorun.js': 'demo_autorun.js',
                              '/demo-assets/nacl-fast.min.js': 'demo_vendor/nacl-fast.min.js'}[path]
-                    self.send(200, (ASSETS / asset).read_bytes(), 'text/javascript; charset=utf-8')
+                    content = (ASSETS / asset).read_text()
+                    self.send(200, self.mounted(content).encode() if not asset.endswith('nacl-fast.min.js') else content.encode(), 'text/javascript; charset=utf-8')
                 elif path.startswith('/demo-audio/'):
                     filename = path.removeprefix('/demo-audio/')
                     manifest = json.loads((ASSETS / 'demo_audio/playbook.json').read_text())
@@ -158,9 +177,9 @@ def handler(visitors):
                 session = self.visitor()
                 origin = self.headers.get('Origin')
                 if (not secrets.compare_digest(self.headers.get('X-Cockpit-Token', ''), session['token'])
-                        or (origin and origin != 'http://' + self.headers.get('Host', ''))):
+                        or (origin and origin not in {scheme + self.headers.get('Host', '') for scheme in ('http://', 'https://')})):
                     return self.send(403, {'error': 'This control belongs to another visitor. Reload your page.'})
-                parts = urlsplit(self.path).path.strip('/').split('/')
+                parts = self.route().strip('/').split('/')
                 if (len(parts) != 3 or parts[0] != 'api' or parts[1] not in visitors.factories
                         or parts[2] not in ('start', 'approve', 'reset', 'export')):
                     return self.send(404, {'error': 'Not found'})
@@ -187,11 +206,12 @@ def main():
     parser.add_argument('--bind', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8395)
     parser.add_argument('--slots', type=int, default=2)
+    parser.add_argument('--prefix', default='', help='public reverse-proxy mount path')
     args = parser.parse_args()
     if not 1 <= args.slots <= 4:
         parser.error('--slots must be between 1 and 4')
     towns = [config.load(path) for path in args.towns]
-    visitors = Visitors({town.name: town for town in towns}, args.storage, slots=args.slots)
+    visitors = Visitors({town.name: town for town in towns}, args.storage, slots=args.slots, prefix=args.prefix)
     server = ThreadingHTTPServer((args.bind, args.port), handler(visitors))
     print(f'Live visitor demo: http://{args.bind}:{server.server_port}/demo', flush=True)
     try:

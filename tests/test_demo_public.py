@@ -96,3 +96,33 @@ def test_capacity_and_queue_preserve_isolation(towns, tmp_path):
                 s.worker.join(15)
     assert all(s.run['state'] == 'completed' for s in stages[:2])
     assert any(e['title'] == 'Waiting for a compute slot' for e in stages[1].run['events'])
+
+
+def test_proxy_mount_cookie_assets_and_https_origin(towns, tmp_path):
+    visitors = Visitors(towns, tmp_path, prefix='/wasteland-live', stage_factory=partial(DemoStage, region='chr1:1-27'))
+    server = ThreadingHTTPServer(('127.0.0.1', 0), handler(visitors))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    try:
+        req = urllib.request.Request(base + '/demo', headers={'X-Forwarded-Proto': 'https'})
+        with urllib.request.urlopen(req) as response:
+            cookie = response.headers['Set-Cookie']
+            assert 'Secure' in cookie and 'HttpOnly' in cookie and 'Path=/wasteland-live' in cookie
+            page = response.read().decode()
+        assert '"/wasteland-live/demo/visitor"' in page
+        assert "'/wasteland-live/api/demo/" in page
+        token = re.search("const TOKEN='([^']+)'", page)[1]
+        with urllib.request.urlopen(base + '/wasteland-live/demo-assets/inspection.js') as response:
+            script = response.read().decode()
+            assert ".replaceAll('_','/')" in script
+            assert '/wasteland-live/api/' in script
+        req = urllib.request.Request(base + '/wasteland-live/api/demo/start', data=b'{}',
+                    headers={'Cookie': cookie.split(';')[0], 'X-Cockpit-Token': token,
+                             'Origin': base.replace('http:', 'https:'), 'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req) as response:
+            assert json.load(response)['run']['state'] == 'awaiting-approval'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

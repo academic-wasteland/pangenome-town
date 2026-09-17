@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/Public/software/academic-wasteland/pangenome-town
-ExecStart=%h/Public/software/academic-wasteland/pangenome-town/.venv/bin/python -m pangenome_town.demo_public --towns %h/Public/software/academic-wasteland/ubar/town.toml %h/Public/software/academic-wasteland/yamatai/town.toml --storage %h/.local/state/wasteland-public-demo --bind 0.0.0.0 --port 8395 --slots 2
+ExecStart=%h/Public/software/academic-wasteland/pangenome-town/.venv/bin/python -m pangenome_town.demo_public --towns %h/Public/software/academic-wasteland/ubar/town.toml %h/Public/software/academic-wasteland/yamatai/town.toml --storage %h/.local/state/wasteland-public-demo --bind 0.0.0.0 --port 8395 --slots 2 --prefix /wasteland-live
 Restart=on-failure
 RestartSec=3
 UMask=0077

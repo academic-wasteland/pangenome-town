@@ -387,3 +387,30 @@ The isolation/queue tests run locally without DDBJ:
 ```sh
 .venv/bin/pytest -q tests/test_demo_public.py
 ```
+
+### Public Internet access to the live laptop demo
+
+Public URL: **https://leechuck.de/wasteland-live/demo**. The second case is
+**https://leechuck.de/wasteland-live/demo/visitor**. Neither requires a login.
+This is live execution, separate from recorded playback at `/academic-wasteland/`.
+
+The laptop's private Wi-Fi address is not Internet-routable. The user service
+`wasteland-demo-tunnel.service` keeps an outbound SSH connection to lc2, binding a
+remote **loopback-only** port 8397 to laptop port 8395. Caddy terminates public
+HTTPS and forwards only `/wasteland-live/*` to that port. The demo runs with
+`--prefix /wasteland-live` so navigation, API calls, narration, evidence inspection
+and session cookies stay within that mount. The tunnel reconnects automatically.
+The laptop must remain awake and connected; this does not move computation to lc2.
+
+Anonymous session cookies isolate visitors; they are not an account/login
+requirement. HTTPS sets Secure, HttpOnly and SameSite=Strict on the scoped cookie.
+The two-compute-slot/eight-request limits continue to apply. The operator cockpit
+is not proxied. Stop public access with
+`systemctl --user stop wasteland-demo-tunnel`.
+
+Browser verification, including new local and DDBJ analyses:
+
+```sh
+.venv/bin/python examples/public_live_demo.py \
+  --url https://leechuck.de/wasteland-live/demo
+```

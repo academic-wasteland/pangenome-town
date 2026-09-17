@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def main():
@@ -12,9 +13,11 @@ def main():
     parser.add_argument('--url', default='http://127.0.0.1:8395/demo')
     parser.add_argument('--screenshot', type=Path)
     args = parser.parse_args()
+    prefix = urlsplit(args.url).path.partition("/demo")[0]
     with tempfile.TemporaryDirectory(prefix='public-replay-browser-', ignore_cleanup_errors=True) as home:
         env = dict(os.environ, RODNEY_HOME=home)
         def browser(*parts):
+            parts = tuple(p.replace('"/api/', '"' + prefix + '/api/') for p in parts)
             result = subprocess.run(['uvx', 'rodney', *parts], cwd=home, env=env, capture_output=True,
                                     text=True, timeout=90, check=False)
             if result.returncode:
@@ -63,7 +66,7 @@ def main():
             browser('assert', '(async()=>!(await (await fetch("/api/demo-cluster")).json()).run)()')
             first=browser('js', '(async()=>(await (await fetch("/api/demo")).json()).run.id)()')
             print('Live cohorts: synchronized narration, pause/resume, signatures and all 510 new result rows passed.', flush=True)
-            browser('click', 'nav a[href="/demo/visitor"]')
+            browser('click', 'nav a[href$="/demo/visitor"]')
             run();inspect(3)
             assert browser('js', '(async()=>(await (await fetch("/api/demo")).json()).run.id)()')==first
             browser('click', '#reset')
