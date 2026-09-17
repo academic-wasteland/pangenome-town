@@ -830,7 +830,7 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
 
 @pytest.mark.asyncio
 async def test_live_tes_opt_in_dispatch(monkeypatch):
-    """Opt-in live GA4GH TES v1.1 endpoint test using environment variables.
+    """Opt-in live GA4GH TES v1.1 status probe test using environment variables.
 
     Set AW_LIVE_TES_ENDPOINT and AW_LIVE_TES_TOKEN to execute against a real remote service.
     """
@@ -839,7 +839,7 @@ async def test_live_tes_opt_in_dispatch(monkeypatch):
     endpoint = os.environ.get("AW_LIVE_TES_ENDPOINT")
     token = os.environ.get("AW_LIVE_TES_TOKEN", "")
     if not endpoint:
-        pytest.skip("AW_LIVE_TES_ENDPOINT not set; skipping live TES service test")
+        pytest.skip("AW_LIVE_TES_ENDPOINT not set; skipping live TES service probe test")
 
     from pangenome_town.compute.runner import TESComputeRunner
 

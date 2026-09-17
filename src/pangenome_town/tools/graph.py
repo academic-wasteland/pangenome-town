@@ -213,6 +213,7 @@ class GraphTools:
             bundle_digest = loaded_manifest.bundle_digest
 
         task_uuid = f"urn:uuid:{uuid.uuid4()}"
+        uuid_token = task_uuid.split(":")[-1][:12]
         resolved_requester = requester or f"https://w3id.org/academic-wasteland/{self.town.name}/agents/townsfolk"
         resolved_request_id = request_id or f"urn:uuid:{uuid.uuid4()}"
         graph_id = contract.graph_iri(self.town)
@@ -258,7 +259,7 @@ class GraphTools:
             outputs=[
                 {
                     "path": output_path,
-                    "url": f"{output_url_prefix.rstrip('/')}/{stem}.vg",
+                    "url": f"{output_url_prefix.rstrip('/')}/{uuid_token}/{stem}.vg",
                 }
             ],
         )

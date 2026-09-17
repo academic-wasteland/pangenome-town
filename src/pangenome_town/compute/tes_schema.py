@@ -22,13 +22,23 @@ def _extract_inputs(
     seen: set[str] = set()
     storage_map = dataset_storage_map or {}
 
+    used_paths: set[str] = set()
+
     def add_input(url: str, path: str | None = None) -> None:
         if not url or url in seen:
             return
         seen.add(url)
-        # Determine container path: /container/input/<filename>
-        basename = os.path.basename(url.split("?")[0].split("#")[0]) or "input_file"
-        target_path = path or f"/container/input/{basename}"
+        # Determine container path: /container/input/<filename>, avoiding collisions
+        clean_url = url.split("?")[0].split("#")[0]
+        basename = os.path.basename(clean_url) or "input_file"
+        target_path = path
+        if not target_path:
+            target_path = f"/container/input/{basename}"
+            if target_path in used_paths:
+                url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
+                stem, ext = os.path.splitext(basename)
+                target_path = f"/container/input/{stem}_{url_hash}{ext}"
+        used_paths.add(target_path)
         inputs.append({
             "url": url,
             "path": target_path,
@@ -47,10 +57,10 @@ def _extract_inputs(
                     or (storage_map.get(ds_id) if ds_id else None)
                 )
                 path = ds.get("path")
-                if isinstance(url, str) and url.startswith(("http://", "https://", "s3://", "file://")):
+                if isinstance(url, str) and (url.startswith(("http://", "https://", "s3://", "file://", "/"))):
                     add_input(url, path)
             elif isinstance(ds, str):
-                url = storage_map.get(ds) or (ds if ds.startswith(("http://", "https://", "s3://", "file://")) else None)
+                url = storage_map.get(ds) or (ds if ds.startswith(("http://", "https://", "s3://", "file://", "/")) else None)
                 if url:
                     add_input(url)
 

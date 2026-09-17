@@ -198,6 +198,7 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
             raise ComputeError('execution already claimed; inspect its job before preparing a new task')
         db.execute('INSERT INTO executions VALUES (?, ?, NULL)', (task['id'], keys.sha256_digest(task)))
         db.commit()
+        dispatched_task = False
         results = []
         for data in datasets:
             selected = dataclasses.replace(site, datasets=('vcf',), paths={'vcf': data['locations'][site.storage]['vcf']})
@@ -229,7 +230,7 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                 validator = SemanticValidator(manifest, reasoner) if reasoner is not None else None
                 gate = SemanticGate(
                     manifest=manifest,
-                    reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a) if v else {"status": "entailed"},
+                    reasoner=lambda doc, v=validator, a=admission_axioms: v.validate(doc, receiver_assertions=a) if v else {"status": "indeterminate"},
                 )
                 ds_entity = {
                     "@id": f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
@@ -244,6 +245,7 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                     request_id=task["id"],
                     include_graph=False,
                 )
+                task_doc["@id"] = task["id"]
                 task_doc["semanticContract"] = manifest.id
                 task_doc["ontologyProfile"] = manifest.bundle_digest
                 actual_driver = driver_for(selected, gate=gate, rcp_task=task_doc)
@@ -251,9 +253,14 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                 actual_driver = driver or driver_for(selected)
             if hasattr(actual_driver, 'on_progress'):
                 actual_driver.on_progress = lambda dataset=data['id'], **detail: event('scheduler', dataset=dataset, **detail)
+            def _on_start(detail, dataset=data['id']):
+                nonlocal dispatched_task
+                dispatched_task = True
+                event('execution_started', dataset=dataset, **detail)
+
             result = run_task(town, template_name=task['workflow'], region=region, out_dir=out,
                               site=selected, driver=actual_driver, dataset_samples=tuple(data['samples']),
-                              on_start=lambda detail, dataset=data['id']: event('execution_started', dataset=dataset, **detail))
+                              on_start=_on_start)
             outputs = []
             for output in result['outputs']:
                 path = Path(output['path'])
@@ -277,8 +284,8 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
         try:
             db.rollback()
             # Only clean up un-dispatched / un-submitted claims so retry isn't permanently locked out,
-            # but preserve the row if execution already started/submitted results to avoid duplicate tasks.
-            if "results" not in locals() or not results:
+            # but preserve the row if execution already dispatched to avoid duplicate tasks.
+            if "dispatched_task" not in locals():
                 db.execute('DELETE FROM executions WHERE id=? AND result IS NULL', (task['id'],))
                 db.commit()
         except sqlite3.Error:

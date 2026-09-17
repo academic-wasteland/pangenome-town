@@ -78,6 +78,7 @@ class Site:
             "name": self.name, "driver": self.driver, "enabled": self.enabled, "host": self.host, "workdir": self.workdir,
             "scheduler": self.scheduler, "submit_host": self.submit_host, "partition": self.partition, "storage": self.storage,
             "output_url_prefix": redacted_output_prefix,
+            "allow_insecure_http": self.allow_insecure_http,
             "token": "***" if self.token else None,
             "datasets": list(self.datasets), "tools": list(self.tools),
             "max_cpus": self.max_cpus, "max_mem_gb": self.max_mem_gb, "max_wall_seconds": self.max_wall_seconds,
@@ -506,6 +507,7 @@ class TESDriver:
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
         import asyncio
         import shutil
+        import uuid
 
         from .runner import TESComputeRunner
         from .tes_schema import build_tes_task
@@ -529,8 +531,8 @@ class TESDriver:
             self.site.output_url_prefix
             or self.options.get("output_url_prefix")
         )
-        if not output_prefix or not output_prefix.startswith(("http://", "https://", "s3://", "file://")):
-            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S), s3://, or file:// output storage URL (output_url_prefix)")
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S) or file:// output storage URL (output_url_prefix); object-store protocols like s3:// must be fetched via HTTP(S) gateways")
 
         default_image = "quay.io/biocontainers/bcftools:1.21--h8b25389_0" if job.workflow in {"genotype-export", "allele-frequency"} else "quay.io/vgteam/vg:v1.64.1"
         image = self.options.get("image", default_image)
@@ -549,7 +551,8 @@ class TESDriver:
         for k, v in self.site.paths.items():
             dataset_storage_map[k] = v
             # If path is a host path or URI, assign a container path for command substitution
-            input_container_path = f"{container_input_dir}/{Path(v).name}"
+            clean_v = v.split("?", 1)[0].split("#", 1)[0]
+            input_container_path = f"{container_input_dir}/{Path(clean_v).name}"
             path_replacements[v] = input_container_path
 
         if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
@@ -600,12 +603,15 @@ class TESDriver:
 
         combined_command = ["sh", "-c", " && ".join(commands)]
 
-        # Populate TES outputs from job.outputs
+        # Populate TES outputs from job.outputs with unique task namespace
+        run_uuid = uuid.uuid4().hex[:12]
+        output_dest_prefix = f"{output_prefix.rstrip('/')}/{run_uuid}"
+
         tes_outputs = []
         for out in fetched:
             out_name = out["name"]
             out_path = f"{container_output_dir}/{out_name}"
-            out_url = f"{output_prefix.rstrip('/')}/{out_name}"
+            out_url = f"{output_dest_prefix}/{out_name}"
             tes_outputs.append({
                 "name": out_name,
                 "path": out_path,
@@ -679,11 +685,13 @@ class TESDriver:
                     shutil.copy2(src_path, target)
                 else:
                     # Download remote output URL if available
-                    out_url = f"{output_prefix.rstrip('/')}/{output['name']}"
+                    out_url = f"{output_dest_prefix}/{output['name']}"
                     if out_url.startswith("file://"):
                         local_src = Path(out_url.removeprefix("file://"))
                         if local_src.exists():
                             shutil.copy2(local_src, target)
+                        elif src_path.exists():
+                            shutil.copy2(src_path, target)
                         else:
                             raise ComputeError(f"TES output {output['name']} was not produced at {local_src}")
                     elif out_url.startswith(("http://", "https://")):
@@ -692,11 +700,16 @@ class TESDriver:
 
                             import httpx
 
+                            out_parsed = urlparse(out_url)
+                            out_loopback = (out_parsed.hostname or "") in {"localhost", "127.0.0.1", "::1"}
+                            allow_insecure = bool(self.site.allow_insecure_http or self.options.get("allow_insecure_http"))
+                            if not out_loopback and out_parsed.scheme != "https" and not allow_insecure:
+                                raise ComputeError(f"TES output download URL '{out_url}' requires HTTPS unless allow_insecure_http is true")
+
                             headers = {}
                             # Only attach TES bearer token if output destination is same-origin
                             if self.site.token and self.site.host:
                                 site_parsed = urlparse(self.site.host)
-                                out_parsed = urlparse(out_url)
                                 if (site_parsed.scheme, site_parsed.netloc) == (out_parsed.scheme, out_parsed.netloc):
                                     headers["Authorization"] = f"Bearer {self.site.token}"
 
@@ -705,6 +718,8 @@ class TESDriver:
                                 resp.raise_for_status()
                                 target.write_bytes(resp.content)
                         except Exception as dl_err:
+                            if isinstance(dl_err, ComputeError):
+                                raise
                             raise ComputeError(f"Failed to download TES output from {out_url}: {dl_err}") from dl_err
                     else:
                         raise ComputeError(f"TES output {output['name']} was not produced or fetched into {target}")

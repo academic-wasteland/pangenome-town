@@ -112,12 +112,10 @@ class SemanticGate:
 
         if callable(target_reasoner) and not hasattr(target_reasoner, "validate") and not hasattr(target_reasoner, "evaluate_gate") and not hasattr(target_reasoner, "classify"):
             result = target_reasoner(rcp_task)
-            if isinstance(result, str):
-                status = result
-            elif isinstance(result, dict) and "status" in result:
+            if isinstance(result, dict) and "status" in result:
                 status = result["status"]
             else:
-                status = str(result)
+                raise SemanticPolicyError("Semantic gating requires a structured reasoning validation report with a 'status' field")
         elif target_reasoner is not None and hasattr(target_reasoner, "evaluate_gate"):
             result = target_reasoner.evaluate_gate(rcp_task, manifest=target_manifest)
             if isinstance(result, str):
