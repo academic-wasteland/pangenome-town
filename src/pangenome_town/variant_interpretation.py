@@ -83,9 +83,11 @@ def report_pdf(report):
     return output.getvalue()
 
 
-def request_text(variant, phenotypes):
+def request_text(variant, phenotypes, resolution=None):
+    labels = {t['id']: t['label'] for t in (resolution or {}).get('terms', [])}
+    terms = [f"{labels[p]} ({p})" if p in labels else p for p in phenotypes]
     return (f"Please assess {variant['assembly']} {variant['chrom']}:{variant['pos']} {variant['ref']}>{variant['alt']} "
-            f"with phenotype identifiers {', '.join(phenotypes)}. Apply the available ACMG evidence and return a sourced PDF report. "
+            f"with phenotype identifiers {', '.join(terms)}. Apply the available ACMG evidence and return a sourced PDF report. "
             "I am sending only this allele and phenotype terms; the VCF remains at Yamatai.")
 
 
@@ -108,10 +110,10 @@ def interpret(town, body):
     if not isinstance(phenotypes, list) or not 1 <= len(phenotypes) <= 30 or any(
             not isinstance(p, str) or not re.fullmatch(r'(HP|MP):\d{7}', p) for p in phenotypes):
         raise ValueError('Provide 1–30 resolved HPO/MP phenotype identifiers')
-    if body.get('text') not in (None, '', request_text(variant, phenotypes)):
-        raise ValueError('Themis accepts only one variant and phenotype identifiers; use the bounded request text without patient metadata')
     from .phenotype_labels import resolve
     _, resolution = resolve(town.extra.get('phenotype_search', {}), phenotypes)
+    if body.get('text') not in (None, '', request_text(variant, phenotypes), request_text(variant, phenotypes, resolution)):
+        raise ValueError('Themis accepts only one variant and phenotype identifiers; use the bounded request text without patient metadata')
     raw = EVIDENCE.read_bytes()
     evidence = json.loads(raw)
     report = {'agent': 'themis', 'town': town.name, 'variant': variant, 'phenotypes': sorted(set(phenotypes)),

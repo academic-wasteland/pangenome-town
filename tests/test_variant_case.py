@@ -70,6 +70,9 @@ def test_evidence_classification_is_not_a_lookup_of_the_answer():
 def test_themis_pdf_and_strict_disclosure(configured):
     body = {'variant': VARIANT, 'phenotypes': TERMS}
     result = interpret(configured['ubar'], body)
+    from pangenome_town.variant_interpretation import request_text
+    paired = {'terms': [{'id': TERMS[0], 'label': 'Ectopia lentis'}]}
+    assert 'Ectopia lentis (HP:0001083)' in request_text(VARIANT, TERMS, paired)
     pdf = base64.b64decode(result['pdf_base64'])
     assert pdf.startswith(b'%PDF-') and hashlib.sha256(pdf).hexdigest() == result['pdf_sha256']
     assert result['report']['classification'] == 'Likely pathogenic'

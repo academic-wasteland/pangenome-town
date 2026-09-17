@@ -24,11 +24,19 @@ EXAMPLE_IDS = {'HP:0001083', 'HP:0001166', 'HP:0002616'}
 
 
 class PhenotypeStage(DemoStage):
-    def __init__(self, towns, *, storage=None, client_factory=None, catalogue_reader=None):
+    def __init__(self, towns, *, storage=None, client_factory=None, catalogue_reader=None, actor_name=None):
         super().__init__(towns, storage=storage)
+        self.actor_name = actor_name
         self.client_factory = client_factory
         self.catalogue_reader = catalogue_reader
         self.requester = towns.get('yamatai')
+
+    def _event(self, sender, recipient, title, text, **kwargs):
+        if self.actor_name:
+            sender = self.actor_name + sender[5:] if sender.startswith('human') else sender
+            recipient = self.actor_name if recipient == 'human' else recipient
+            title = title.replace('Human request', 'Personal request')
+        return super()._event(sender, recipient, title, text, **kwargs)
 
     def preflight(self):
         ready = bool(self.requester and self.requester.extra.get('federation', {}).get('state'))
@@ -208,7 +216,7 @@ class PhenotypeStage(DemoStage):
         request = {'resident': step['resident'], 'variant': selected, 'phenotypes': genes['query']['phenotypes']}
         from .variant_interpretation import request_text
         interpretation = self._request(client, step['town'], step['operation'], request,
-                                       text=request_text(selected, genes['query']['phenotypes']), recipient=step['town'] + '/' + step['resident'])
+                                       text=request_text(selected, genes['query']['phenotypes'], genes.get('resolution')), recipient=step['town'] + '/' + step['resident'])
         report = interpretation['report']
         if report.get('variant') != selected or report.get('agent') != 'themis':
             raise StageError('Themis returned a report for a different variant or agent.')

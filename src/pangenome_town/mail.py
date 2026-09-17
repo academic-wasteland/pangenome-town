@@ -44,7 +44,17 @@ def body_for(envelope: Envelope) -> str:
     if region:
         lines.append(f"Region: {region}")
     lines.append("")
+    attribution = envelope.body.get('_conversation')
+    if attribution:
+        actor = attribution.get('actor', {})
+        lines.append(f"Person: {actor.get('display')} ({actor.get('id')}); attributed by {attribution.get('origin')}.")
+        lines.append("Attribution is not an identity credential or access grant.")
+        lines.append(f"Conversation: {attribution.get('id')}")
+        lines.append(f"Delegate with: pangenome-town send --conversation-parent {envelope.id} --to TOWN --resident AGENT --text 'task'")
     lines.append(envelope.text or "(no text)")
+    extra = {k: v for k, v in envelope.body.items() if k not in {'text', '_conversation', 'operation', 'resident'}}
+    if extra:
+        lines.extend(["", "Structured request data:", json.dumps(extra, indent=2)])
     if envelope.attachments:
         lines.append("")
         lines.append("Attachments:")
