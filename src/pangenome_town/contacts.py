@@ -5,7 +5,7 @@ import tomllib
 def directory(town, *, public=False):
     residents = []
     for path in sorted((town.city_root / 'agents').glob('*/agent.toml')):
-        if public and path.parent.name not in {'q', 'bloodninja', 'irb', 'dac', 'bloodninja_scout', 'phenomancer', 'sam', 'bob'}:
+        if public and path.parent.name not in {'q', 'bloodninja', 'irb', 'dac', 'bloodninja_scout', 'phenomancer', 'themis', 'sam', 'bob'}:
             continue
         try:
             settings = tomllib.loads(path.read_text())
