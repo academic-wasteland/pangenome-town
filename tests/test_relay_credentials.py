@@ -138,3 +138,93 @@ def test_real_relay_holder_retrieval_and_receiver_release_gate(authority, tmp_pa
         assert not gate().ok  # Before release: freshly observed revocation blocks it.
     finally:
         worker.db.close();server.shutdown();server.server_close();thread.join();store.db.close()
+
+
+def test_status_accepts_zerzura_request_and_rejects_conflicting_ids(authority):
+    reg, _issuer, relay = authority
+    _, _, doc = apply(reg, relay, keys.generate())
+    reply = relay.handle('zerzura', {'operation':'credential-status','credential':doc['id'],
+                                   'status_id':doc['credentialStatus']['id']})
+    assert reply['statement']['status'] == 'active'
+    with pytest.raises(RegistryError, match='conflict'):
+        relay.handle('zerzura', {'operation':'credential-status','id':doc['id'],
+                                'credential':'urn:wrong'})
+    with pytest.raises(RegistryError, match='conflict'):
+        relay.handle('zerzura', {'operation':'credential-status','id':doc['id'],
+                                'status_id':'urn:wrong'})
+    with pytest.raises(RegistryError, match='issuer'):
+        relay.handle('zerzura', {'operation':'credential-status','id':doc['id'],'issuer':'urn:wrong'})
+
+
+def test_authority_describe_advertises_credential_operations():
+    from wasteland.bridge import Bridge
+
+    from pangenome_town.authority.relay import OPERATIONS
+    bridge = Bridge.__new__(Bridge)
+    bridge.town = SimpleNamespace(name='camelot',kind='authority')
+    bridge.upstream = lambda _: {'issuers':[]}
+    reply = bridge.handle({'body':{'operation':'describe'}}, {'capabilities':list(OPERATIONS)})
+    assert set(OPERATIONS) <= set(reply['capabilities'])
+
+
+def zerzura_modules(source):
+    """Load the pinned independent implementation without modifying its files."""
+    import importlib
+    import sys
+    from types import ModuleType
+    package = ModuleType('zerzura_counterpart')
+    package.__path__ = [str(source / 'examples')]
+    sys.modules[package.__name__] = package
+    return [importlib.import_module(package.__name__+'.'+name)
+            for name in ('camelot_trust','mimic_presentation','credential_status')]
+
+
+def test_zerzura_independent_verifiers(authority, tmp_path):
+    import os
+    from pathlib import Path
+    source = os.environ.get('ZERZURA_SOURCE')
+    if not source:
+        pytest.skip('set ZERZURA_SOURCE to the pinned independent Zerzura checkout; CI does so')
+    trust, presentation, status = zerzura_modules(Path(source))
+    reg, issuer, relay = authority
+    key = keys.generate()
+    _, _, doc = apply(reg,relay,key)
+    record = {'issuers':[issuer],'source':'explicit test trust configuration','fetched':cred.iso(datetime.now(UTC))}
+    assert trust.verify_credential(doc,record=record)['verified']
+    store = presentation.ChallengeStore(tmp_path/'zerzura.sqlite')
+    query = {'group_by':['sex'],'aggregate':'count'}
+    try:
+        challenge = store.issue('town_a')
+        created = cred.iso(datetime.now(UTC))
+        proof = {'type':presentation.PROOF_TYPE,'challenge':challenge['challenge'],'created':created,
+                 'proofValue':keys._b64encode(key.sign(presentation.binding(challenge=challenge['challenge'],
+                      created=created,credential_id=doc['id'],query=query,subject=doc['credentialSubject']['id'],town='zerzura')))}
+        def check(proof, **overrides):
+            kwargs = {'credential':doc,'query':query,'requester':'town_a','town':'zerzura','store':store}
+            kwargs.update(overrides)
+            return presentation.verify_presentation(proof,**kwargs)
+        with pytest.raises(presentation.PresentationError):
+            check(proof,query={'aggregate':'other'})
+        with pytest.raises(presentation.PresentationError):
+            check(proof,requester='town_b')
+        assert check(proof)['holder_binding']=='verified'
+        with pytest.raises(presentation.PresentationError,match='already used'):
+            check(proof)
+        conflict = copy.deepcopy(doc);conflict['credentialSubject']['publicKey']=keys.public_key_text(keys.generate())
+        with pytest.raises(presentation.PresentationError,match='ambiguous'):
+            presentation.subject_key(conflict)
+        def ask(town, body):
+            assert town == 'camelot'
+            return relay.handle('zerzura',body)
+        assert status.check(doc,record=record,ask=ask)['signature_checked']
+        active = ask('camelot',{'operation':'credential-status','id':doc['id']})
+        with pytest.raises(status.StatusError):
+            status.check(doc,record=record,ask=lambda *_:active,now=datetime.now(UTC)+timedelta(seconds=61))
+        tampered = copy.deepcopy(active);tampered['statement']['credential']='urn:wrong'
+        with pytest.raises(status.StatusError):
+            status.check(doc,record=record,ask=lambda *_:tampered)
+        reg.revoke(doc['id'])
+        with pytest.raises(status.StatusError,match='revoked'):
+            status.check(doc,record=record,ask=ask)
+    finally:
+        store.close()

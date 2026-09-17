@@ -42,7 +42,14 @@ class RelayAuthority:
     def handle(self, sender, body):
         operation = body.get('operation')
         if operation == 'credential-status':
-            return self.status(body.get('id'), body.get('issuer'))
+            identifier = body.get('id') or body.get('credential') or body.get('status_id')
+            result = self.status(identifier, body.get('issuer'))
+            statement = result['statement']
+            if statement['credential'] is not None:
+                for field, expected in (('credential', statement['credential']), ('status_id', statement['status_id'])):
+                    if field in body and body[field] != expected:
+                        raise RegistryError('conflicting credential/status identifiers')
+            return result
         if operation == 'credential-challenge':
             request = body.get('request')
             if not isinstance(request, dict) or request.get('action') not in ('apply', 'fetch'):
@@ -101,6 +108,8 @@ class RelayAuthority:
         document = self.registry.credential(identifier)
         if document and identifier not in (document['id'], document['credentialStatus']['id']):
             document = None  # Never resolve an arbitrary namespace solely by its UUID suffix.
+        if document and issuer is not None and issuer != document['issuer']:
+            raise RegistryError('issuer conflicts with credential issuer')
         issuer = document['issuer'] if document else issuer
         slug = self.registry._slug_for(issuer)
         if slug is None:

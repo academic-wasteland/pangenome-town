@@ -16,7 +16,14 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: sudo apt-get update && sudo apt-get install -y bcftools
       - run: python -m pip install '.[dev,literature]'
+      - uses: actions/checkout@v4
+        with:
+          repository: micheldumontier/wasteland-starter-pack
+          ref: 4c03774a0a9ed701d30648f94e56c084ca95d08a
+          path: external/zerzura
       - run: python -m pytest -q
+        env:
+          ZERZURA_SOURCE: external/zerzura
   keycloak:
     runs-on: ubuntu-latest
     timeout-minutes: 10
