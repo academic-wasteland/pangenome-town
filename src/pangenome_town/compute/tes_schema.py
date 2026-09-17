@@ -9,10 +9,18 @@ from typing import Any
 from ..exchange import canonical
 
 
-def _extract_inputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract input file URIs from an RCP ResearchTask and map to TES inputs."""
+def _extract_inputs(
+    rcp_task: dict[str, Any],
+    dataset_storage_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract input file URIs from an RCP ResearchTask and map to TES inputs.
+
+    Resolves datasets using an explicit dataset_storage_map or downloadUrl/url.
+    Does not treat arbitrary semantic IRIs (@id) as download locations unless mapped.
+    """
     inputs: list[dict[str, Any]] = []
     seen: set[str] = set()
+    storage_map = dataset_storage_map or {}
 
     def add_input(url: str, path: str | None = None) -> None:
         if not url or url in seen:
@@ -26,17 +34,24 @@ def _extract_inputs(rcp_task: dict[str, Any]) -> list[dict[str, Any]]:
             "path": target_path,
         })
 
-    # 1. usesDataset can contain entities with url, downloadUrl, or @id
+    # 1. usesDataset can contain entities with url, downloadUrl, or mapped storage
     datasets = rcp_task.get("usesDataset")
     if isinstance(datasets, list):
         for ds in datasets:
             if isinstance(ds, dict):
-                # Check for explicit url/downloadUrl
-                url = ds.get("url") or ds.get("downloadUrl") or ds.get("@id")
+                # Check for explicit url/downloadUrl or mapped storage
+                ds_id = ds.get("@id")
+                url = (
+                    ds.get("url")
+                    or ds.get("downloadUrl")
+                    or (storage_map.get(ds_id) if ds_id else None)
+                )
                 if isinstance(url, str) and url.startswith(("http://", "https://", "s3://", "file://")):
                     add_input(url)
-            elif isinstance(ds, str) and ds.startswith(("http://", "https://", "s3://", "file://")):
-                add_input(ds)
+            elif isinstance(ds, str):
+                url = storage_map.get(ds) or (ds if ds.startswith(("s3://", "file://")) else None)
+                if url:
+                    add_input(url)
 
     # 2. Check explicit "inputs" in rcp_task if present
     explicit_inputs = rcp_task.get("inputs")
@@ -60,9 +75,8 @@ def _extract_outputs(
     """Extract expected outputs from an RCP ResearchTask and map to TES outputs.
 
     GA4GH TES v1.1 requires both `path` and `url` for output files/directories.
-    If an explicit `url` is not provided in the task output specification, `output_url_prefix`
-    or task-level `outputBaseUrl` or a default destination URI (`file://` container target)
-    is applied so outputs are schema-conformant.
+    Requires an explicit destination URL (`output_url_prefix`, task-level `outputBaseUrl`,
+    or per-output `url`/`downloadUrl`).
     """
     outputs: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -81,8 +95,10 @@ def _extract_outputs(
                 filename = os.path.basename(path)
                 url = f"{base_url.rstrip('/')}/{filename}"
             else:
-                # Default conformant URL: file:// scheme targeting the output path
-                url = f"file://{path}"
+                raise ValueError(
+                    f"TES output '{path}' requires an explicit remote output destination url, "
+                    "output_url_prefix, or outputBaseUrl"
+                )
         out: dict[str, Any] = {"path": path, "url": url}
         outputs.append(out)
 
@@ -108,12 +124,13 @@ def build_tes_task(
     output_url_prefix: str | None = None,
     stdout: str | None = None,
     stderr: str | None = None,
+    dataset_storage_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Map an RCP ResearchTask JSON-LD document to a GA4GH TES v1.1 task dictionary.
 
     Extracts inputs, outputs, executor specification, and preserves rcp_id and rcp_digest in tags.
     """
-    inputs = _extract_inputs(rcp_task)
+    inputs = _extract_inputs(rcp_task, dataset_storage_map=dataset_storage_map)
     outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
 
     executor: dict[str, Any] = {

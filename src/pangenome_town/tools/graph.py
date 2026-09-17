@@ -132,6 +132,9 @@ def _sample_of(path_name: str) -> str:
     return path_name.split("#", 1)[0]
 
 
+VG_IMAGE_DEFAULT = "quay.io/vgteam/vg:v1.64.1"
+
+
 class GraphTools:
     def __init__(self, town: TownConfig):
         self.town = town
@@ -149,11 +152,13 @@ class GraphTools:
     def build_tes_chunk_task(
         self,
         region: Region,
-        executor_image: str = "quay.io/vgteam/vg:latest",
+        executor_image: str = VG_IMAGE_DEFAULT,
         container_graph_path: str = "/container/input/graph.gbz",
         graph_url: str | None = None,
         output_url_prefix: str | None = None,
         manifest: Any = None,
+        requester: str | None = None,
+        request_id: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build a GA4GH TES v1.1 task definition and matching RCP task for a vg chunk operation.
 
@@ -161,15 +166,26 @@ class GraphTools:
 
         - vg chunk writes single-region extraction to stdout; executor stdout is directed to
           /container/output/{stem}.vg.
-        - The input URL can be explicitly provided (e.g. S3/HTTP) or defaults to file:// of local graph.
-        - Outputs contain compliant URLs.
-        - The RCP task populates semanticContract and ontologyProfile when a manifest is provided or
-          rendered for the town.
+        - Requires a service-reachable graph_url (e.g. s3:// or https://) for distributed TES tasks.
+        - Outputs contain compliant URLs using output_url_prefix.
+        - The RCP task populates standard RCP fields (taskType, requestedBy, partOfRequest, usesDataset,
+          semanticContract, ontologyProfile).
         """
+        import uuid
+
         from ..compute.tes_schema import build_tes_task
         from ..rcp import contract
 
-        graph_path = self._require_graph()
+        if not graph_url:
+            raise ValueError(
+                "A service-reachable graph_url (e.g. s3:// or https://) is required for distributed TES tasks"
+            )
+
+        if not output_url_prefix:
+            raise ValueError(
+                "An output_url_prefix (e.g. s3:// or https://) is required for remote TES outputs"
+            )
+
         path_name = self.town.reference_path(region.assembly, region.chrom)
         stem = f"chunk_{region.chrom}_{region.start}_{region.end}"
         output_path = f"/container/output/{stem}.vg"
@@ -193,14 +209,23 @@ class GraphTools:
             contract_id = rendered_manifest.id
             bundle_digest = rendered_manifest.bundle_digest
 
-        resolved_graph_url = graph_url or f"file://{graph_path}"
+        task_uuid = f"urn:uuid:{uuid.uuid4()}"
+        resolved_requester = requester or f"https://w3id.org/academic-wasteland/{self.town.name}/agents/townsfolk"
+        resolved_request_id = request_id or f"urn:uuid:{uuid.uuid4()}"
+        graph_id = contract.graph_iri(self.town)
+
         rcp_task: dict[str, Any] = {
             "@context": "https://w3id.org/research-commons/v0.1/",
-            "@id": f"urn:uuid:vg-chunk-{region.chrom}-{region.start}-{region.end}",
-            "@type": ["ResearchTask", "RegionExtractionTask"],
-            "inputs": [
+            "@id": task_uuid,
+            "@type": ["ResearchTask", f"{contract.PG}RegionExtractionTask"],
+            "taskType": f"{contract.PG}RegionExtractionTask",
+            "requestedBy": {"@id": resolved_requester, "@type": "Agent"},
+            "partOfRequest": resolved_request_id,
+            "usesDataset": [
                 {
-                    "url": resolved_graph_url,
+                    "@id": graph_id,
+                    "@type": ["PublicDataset", f"{contract.PG}PangenomeGraph"],
+                    "url": graph_url,
                     "path": container_graph_path,
                 }
             ],
@@ -208,6 +233,7 @@ class GraphTools:
                 {
                     "name": f"{stem}.vg",
                     "path": output_path,
+                    "url": f"{output_url_prefix.rstrip('/')}/{stem}.vg",
                 }
             ],
         }

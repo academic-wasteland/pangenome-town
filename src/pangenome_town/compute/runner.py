@@ -109,18 +109,13 @@ class SemanticGate:
         elif target_reasoner is not None and hasattr(target_reasoner, "validate"):
             result = target_reasoner.validate(rcp_task)
             status = result.get("status") if isinstance(result, dict) else str(result)
-        elif target_manifest is not None:
+        elif target_reasoner is not None and hasattr(target_reasoner, "classify") and hasattr(target_reasoner, "gate_status"):
+            status = getattr(target_reasoner, "gate_status", "indeterminate")
+        else:
             active_reasoner = target_reasoner or KMRunner()
             validator = SemanticValidator(target_manifest, active_reasoner)
             report = validator.validate(rcp_task)
             status = report.get("status", "unknown")
-        elif target_reasoner is not None and hasattr(target_reasoner, "classify"):
-            active_reasoner = target_reasoner
-            status = getattr(active_reasoner, "gate_status", "indeterminate")
-        else:
-            raise SemanticPolicyError(
-                "Semantic gating cannot evaluate: no contract manifest or reasoner provided"
-            )
 
         if status != "entailed":
             raise SemanticPolicyError(
@@ -187,32 +182,30 @@ class TESComputeRunner(ComputeRunner):
         When a SemanticGate is configured or an rcp_task is provided, validates that the task
         is semantically entailed and that the payload's rcp_digest matches the exact task.
         """
-        if self.gate is not None:
-            if rcp_task is None:
-                raise SemanticPolicyError(
-                    "TES dispatch failed semantic gating: no source RCP task provided"
-                )
-            expected_digest = tes_task_payload.get("tags", {}).get("rcp_digest")
-            if not expected_digest:
-                raise SemanticPolicyError(
-                    "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
-                )
-            from ..exchange import canonical
+        if self.gate is None:
+            raise SemanticPolicyError("TES dispatch requires a SemanticGate")
 
-            canonical_bytes = canonical(rcp_task)
-            if isinstance(canonical_bytes, str):
-                canonical_bytes = canonical_bytes.encode("utf-8")
-            actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
-            if not hmac.compare_digest(actual_digest, expected_digest):
-                raise SemanticPolicyError(
-                    f"TES dispatch digest mismatch: payload has {expected_digest}, "
-                    f"but task computed {actual_digest}"
-                )
-            self.gate.evaluate(rcp_task)
-        elif rcp_task is not None:
+        if rcp_task is None:
             raise SemanticPolicyError(
-                "TES dispatch received an RCP task but no SemanticGate is configured to evaluate it"
+                "TES dispatch failed semantic gating: no source RCP task provided"
             )
+        expected_digest = tes_task_payload.get("tags", {}).get("rcp_digest")
+        if not expected_digest:
+            raise SemanticPolicyError(
+                "TES dispatch failed: payload tags must contain 'rcp_digest' binding it to the task"
+            )
+        from ..exchange import canonical
+
+        canonical_bytes = canonical(rcp_task)
+        if isinstance(canonical_bytes, str):
+            canonical_bytes = canonical_bytes.encode("utf-8")
+        actual_digest = f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
+        if not hmac.compare_digest(actual_digest, expected_digest):
+            raise SemanticPolicyError(
+                f"TES dispatch digest mismatch: payload has {expected_digest}, "
+                f"but task computed {actual_digest}"
+            )
+        self.gate.evaluate(rcp_task)
 
         url = f"{self.endpoint_url}/v1/tasks"
         async with httpx.AsyncClient() as client:
@@ -230,7 +223,11 @@ class TESComputeRunner(ComputeRunner):
             except httpx.RequestError as exc:
                 raise ComputeError(f"TES dispatch network error: {exc}") from exc
 
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ComputeError("TES dispatch returned invalid JSON") from exc
+
             if not isinstance(data, dict) or "id" not in data:
                 raise ComputeError(f"TES dispatch returned invalid response: {data}")
             return str(data["id"])
@@ -252,7 +249,11 @@ class TESComputeRunner(ComputeRunner):
             except httpx.RequestError as exc:
                 raise ComputeError(f"TES poll network error: {exc}") from exc
 
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ComputeError("TES poll returned invalid JSON") from exc
+
             raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
             state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
             return state.value

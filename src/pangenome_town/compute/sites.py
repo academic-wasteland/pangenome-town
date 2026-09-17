@@ -27,7 +27,7 @@ from typing import Any
 from ..config import TownConfig
 from . import ComputeError
 
-DRIVERS = ("local", "ssh")
+DRIVERS = ("local", "ssh", "tes")
 SCHEDULERS = ("none", "slurm")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
@@ -427,7 +427,57 @@ def _hms(seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def driver_for(site: Site, **options: Any) -> LocalDriver | SshDriver:
+def driver_for(site: Site, **options: Any) -> LocalDriver | SshDriver | TESDriver:
     if site.driver == "local":
         return LocalDriver()
+    if site.driver == "tes":
+        return TESDriver(site, **options)
     return SshDriver(site, **options)
+
+
+class TESDriver:
+    """Dispatches a rendered job to a remote GA4GH TES endpoint."""
+
+    def __init__(self, site: Site, **options: Any) -> None:
+        self.site = site
+        self.options = options
+
+    def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
+        import asyncio
+
+        from .runner import TESComputeRunner
+
+        runner = TESComputeRunner(
+            endpoint_url=self.site.host or "http://127.0.0.1:8000",
+            bearer_token=self.site.paths.get("token", ""),
+            gate=self.options.get("gate"),
+        )
+        # Synchronous bridge for pipeline compatibility
+        tes_payload = {
+            "name": f"job-{job.spec.get('workflow', 'step')}",
+            "executors": [
+                {
+                    "image": self.options.get("image", "quay.io/vgteam/vg:v1.64.1"),
+                    "command": step.argv,
+                    "stdout": step.stdout,
+                }
+                for step in job.steps
+            ],
+            "tags": self.options.get("tags", {}),
+        }
+        rcp_task = self.options.get("rcp_task")
+
+        async def _run() -> str:
+            task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
+            while True:
+                status = await runner.poll_status(task_id)
+                if status in {"COMPLETE", "SYSTEM_ERROR", "EXECUTOR_ERROR", "CANCELED"}:
+                    if status != "COMPLETE":
+                        raise ComputeError(f"TES execution failed with state: {status}")
+                    break
+                await asyncio.sleep(1)
+            return task_id
+
+        task_id = asyncio.run(_run())
+        outputs = {output["name"]: Path(output["path"]) for output in _fetched_outputs(job)}
+        return JobResult(0, outputs, 1.0, task_id, [])

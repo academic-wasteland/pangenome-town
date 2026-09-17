@@ -640,7 +640,12 @@ def test_build_tes_task_schema_mapping():
     image = "quay.io/vgteam/vg:latest"
     command = ["vg", "chunk", "-x", "/container/input/graph.gbz"]
 
-    tes_task = build_tes_task(sample_rcp_task, executor_image=image, command=command)
+    tes_task = build_tes_task(
+        sample_rcp_task,
+        executor_image=image,
+        command=command,
+        output_url_prefix="s3://output-bucket/runs",
+    )
 
     assert isinstance(tes_task, dict)
     assert tes_task["name"] == "Extract region chr1"
@@ -654,6 +659,7 @@ def test_build_tes_task_schema_mapping():
     # Outputs mapping
     assert len(tes_task["outputs"]) == 1
     assert tes_task["outputs"][0]["path"] == "/container/output/chunk.vg"
+    assert tes_task["outputs"][0]["url"] == "s3://output-bucket/runs/chunk.vg"
 
     # Executors mapping
     assert len(tes_task["executors"]) == 1
@@ -667,16 +673,39 @@ def test_build_tes_task_schema_mapping():
 
 
 @pytest.mark.asyncio
-async def test_tes_compute_runner_dispatch_and_poll():
+async def test_tes_compute_runner_dispatch_and_poll(trusted_manifest):
     import respx
 
     endpoint = "https://tes.example.org"
     token = "secret-bearer-token"
-    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token)
+
+    class EntailedReasoner:
+        name = "mock_km"
+        version = "1.0"
+
+        def evaluate_gate(self, rcp_task, manifest=None):
+            return "entailed"
+
+    gate = SemanticGate(manifest=trusted_manifest, reasoner=EntailedReasoner())
+    runner = TESComputeRunner(endpoint_url=endpoint, bearer_token=token, gate=gate)
+
+    rcp_task = {
+        "@context": "https://w3id.org/research-commons/v0.1/",
+        "@id": "urn:uuid:test-job-999",
+        "@type": ["ResearchTask"],
+    }
+    from pangenome_town.exchange import canonical
+
+    rcp_bytes = canonical(rcp_task)
+    if isinstance(rcp_bytes, str):
+        rcp_bytes = rcp_bytes.encode("utf-8")
+    import hashlib
+    digest = f"sha256:{hashlib.sha256(rcp_bytes).hexdigest()}"
 
     tes_payload = {
         "name": "tes-job",
         "executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+        "tags": {"rcp_digest": digest},
     }
 
     with respx.mock(base_url=endpoint) as respx_mock:
@@ -684,7 +713,7 @@ async def test_tes_compute_runner_dispatch_and_poll():
             status_code=200,
             json={"id": "tes-task-999"},
         )
-        task_id = await runner.dispatch(tes_payload)
+        task_id = await runner.dispatch(tes_payload, rcp_task=rcp_task)
         assert task_id == "tes-task-999"
         assert post_route.called
         assert post_route.calls.last.request.headers["Authorization"] == f"Bearer {token}"
@@ -707,6 +736,9 @@ async def test_tes_compute_runner_dispatch_and_poll():
             ("SYSTEM_ERROR", ComputeState.SYSTEM_ERROR.value),
             ("CANCELED", ComputeState.CANCELED.value),
             ("EXECUTOR_ERROR", ComputeState.EXECUTOR_ERROR.value),
+            ("PAUSED", ComputeState.PAUSED.value),
+            ("PREEMPTED", ComputeState.PREEMPTED.value),
+            ("CANCELING", ComputeState.CANCELING.value),
         ]
         for tes_st, expected_comp_st in states_to_test:
             respx_mock.get(f"/v1/tasks/{tes_st}").respond(
@@ -746,12 +778,17 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
     # 2. Build VG chunk operation task
     tools = graph.GraphTools(town)
     region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
-    tes_payload, rcp_task = tools.build_tes_chunk_task(region, manifest=manifest)
+    tes_payload, rcp_task = tools.build_tes_chunk_task(
+        region,
+        manifest=manifest,
+        graph_url="s3://example-bucket/toy.gbz",
+        output_url_prefix="s3://example-bucket/outputs",
+    )
 
     # 3. Assert build_tes_task generated executors with vg image and command
     assert len(tes_payload["executors"]) == 1
     executor = tes_payload["executors"][0]
-    assert executor["image"] == "quay.io/vgteam/vg:latest"
+    assert executor["image"] == graph.VG_IMAGE_DEFAULT
     assert executor["command"][0] == "vg"
     assert executor["command"][1] == "chunk"
     assert executor["stdout"].endswith(".vg")
@@ -895,7 +932,12 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
 
         tools = graph.GraphTools(town)
         region = graph.Region.parse("GRCh38:chr1:0-20", "GRCh38")
-        tes_payload, rcp_task = tools.build_tes_chunk_task(region, manifest=manifest)
+        tes_payload, rcp_task = tools.build_tes_chunk_task(
+            region,
+            manifest=manifest,
+            graph_url="s3://example-bucket/toy.gbz",
+            output_url_prefix="s3://example-bucket/outputs",
+        )
 
         # 1. Negative test: Modified rcp_task causes digest mismatch, gate blocks submission before network call
         tampered_rcp_task = dict(rcp_task)
