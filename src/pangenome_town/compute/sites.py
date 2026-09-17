@@ -494,7 +494,6 @@ class TESDriver:
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
         import asyncio
         import shutil
-        import uuid
 
         from .runner import TESComputeRunner
         from .tes_schema import build_tes_task
@@ -504,31 +503,8 @@ class TESDriver:
             raise ComputeError(f"site {self.site.name}: TES driver requires a verified manifest-backed SemanticGate")
 
         rcp_task = self.options.get("rcp_task")
-        WORKFLOW_TASK_MAP = {
-            "allele-frequency": "AlleleFrequencyTask",
-            "genotype-export": "IndividualGenotypeExportTask",
-            "region-extract": "RegionExtractionTask",
-            "region-variants": "RegionVariantListingTask",
-            "graph-summary": "GraphSummaryTask",
-            "haplotype-presence": "HaplotypePresenceTask",
-            "gene-lookup": "GeneLookupTask",
-            "deconstruct-region": "WholeGraphDeconstructTask",
-        }
-        task_name = WORKFLOW_TASK_MAP.get(job.workflow, f"{job.workflow.capitalize()}Task")
         if rcp_task is None:
-            from research_commons.constants import CONTEXT_IRI
-
-            rcp_task = {
-                "@context": CONTEXT_IRI,
-                "@id": f"urn:uuid:{uuid.uuid4()}",
-                "@type": "ResearchTask",
-                "semanticContract": f"https://w3id.org/academic-wasteland/{self.site.name}/contract/0.1.0",
-                "ontologyProfile": "sha256:" + "0" * 64,
-                "taskType": f"https://w3id.org/academic-wasteland/pangenome/v0.1/{task_name}",
-                "requestedBy": {"@id": "https://w3id.org/academic-wasteland/tes/runner", "@type": "Agent"},
-                "partOfRequest": f"urn:uuid:{uuid.uuid4()}",
-                "usesDataset": [{"@id": f"https://w3id.org/academic-wasteland/{self.site.name}/dataset/default", "@type": "PublicDataset"}],
-            }
+            raise ComputeError(f"site {self.site.name}: TES driver requires an original, verified RCP task document")
 
         runner = TESComputeRunner(
             endpoint_url=self.site.host or "http://127.0.0.1:8000",
@@ -540,48 +516,77 @@ class TESDriver:
             self.site.output_url_prefix
             or self.options.get("output_url_prefix")
         )
-        if not output_prefix or not output_prefix.startswith(("http://", "https://", "s3://", "file://")):
-            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote output storage URL (output_url_prefix)")
+        if not output_prefix or not output_prefix.startswith(("http://", "https://", "file://")):
+            raise ComputeError(f"site {self.site.name}: TES driver requires an explicit remote HTTP(S) or file:// output storage URL (output_url_prefix)")
 
         image = self.options.get("image", "quay.io/vgteam/vg:v1.64.1")
 
-        # Map steps with stdout handling and translate paths to container mount paths
+        # Map inputs from job and datasets to declared container paths
+        container_input_dir = "/container/input"
         container_work_dir = "/container/work"
-        commands = []
-        for step in job.steps:
-            remapped_argv = []
-            for arg in step.argv:
-                if job.work_dir and arg.startswith(job.work_dir):
-                    remapped_argv.append(arg.replace(job.work_dir, container_work_dir, 1))
-                else:
-                    remapped_argv.append(arg)
-            cmd = " ".join(shlex.quote(arg) for arg in remapped_argv)
-            if step.stdout:
-                stdout_path = step.stdout
-                if job.work_dir and stdout_path.startswith(job.work_dir):
-                    stdout_path = stdout_path.replace(job.work_dir, container_work_dir, 1)
-                cmd += f" > {shlex.quote(stdout_path)}"
-            commands.append(cmd)
-        combined_command = ["sh", "-c", " && ".join(commands)]
+        container_output_dir = "/container/output"
 
-        # Map inputs from job and datasets
+        # Build logical-to-container path mapping and storage map
         dataset_storage_map = {}
+        path_replacements = {}
+        if job.work_dir:
+            path_replacements[job.work_dir] = container_work_dir
+
         for k, v in self.site.paths.items():
             dataset_storage_map[k] = v
+            # If path is a host path or URI, assign a container path for command substitution
+            input_container_path = f"{container_input_dir}/{Path(v).name}"
+            path_replacements[v] = input_container_path
+
         if "usesDataset" in rcp_task and isinstance(rcp_task["usesDataset"], list):
             for ds in rcp_task["usesDataset"]:
                 if isinstance(ds, dict) and ds.get("@id"):
                     ds_id = ds["@id"]
                     if ds.get("url"):
                         dataset_storage_map[ds_id] = ds["url"]
+                        path_replacements[ds["url"]] = f"{container_input_dir}/{Path(ds['url']).name}"
                     elif ds_id in self.site.paths:
                         dataset_storage_map[ds_id] = self.site.paths[ds_id]
+                    # Also map the short name suffix if present
+                    short_name = ds_id.rstrip("/").split("/")[-1]
+                    if short_name in self.site.paths:
+                        dataset_storage_map[ds_id] = self.site.paths[short_name]
+
+        # Map steps with stdout handling and translate paths to container mount paths
+        commands = []
+        for step in job.steps:
+            remapped_argv = []
+            for arg in step.argv:
+                remapped_arg = arg
+                for src_p, dst_p in path_replacements.items():
+                    if remapped_arg.startswith(src_p):
+                        remapped_arg = remapped_arg.replace(src_p, dst_p, 1)
+                remapped_argv.append(remapped_arg)
+            cmd = " ".join(shlex.quote(arg) for arg in remapped_argv)
+            if step.stdout:
+                stdout_path = step.stdout
+                for src_p, dst_p in path_replacements.items():
+                    if stdout_path.startswith(src_p):
+                        stdout_path = stdout_path.replace(src_p, dst_p, 1)
+                cmd += f" > {shlex.quote(stdout_path)}"
+            commands.append(cmd)
+
+        # Ensure container output directory exists and copy outputs from /container/work to /container/output if needed
+        fetched = _fetched_outputs(job)
+        if fetched:
+            copy_cmds = [f"mkdir -p {container_output_dir}"]
+            for out in fetched:
+                out_name = out["name"]
+                copy_cmds.append(f"if [ -f {container_work_dir}/{shlex.quote(out_name)} ]; then cp {container_work_dir}/{shlex.quote(out_name)} {container_output_dir}/{shlex.quote(out_name)}; fi")
+            commands.append(" && ".join(copy_cmds))
+
+        combined_command = ["sh", "-c", " && ".join(commands)]
 
         # Populate TES outputs from job.outputs
         tes_outputs = []
-        for out in _fetched_outputs(job):
+        for out in fetched:
             out_name = out["name"]
-            out_path = f"/container/output/{out_name}"
+            out_path = f"{container_output_dir}/{out_name}"
             out_url = f"{output_prefix.rstrip('/')}/{out_name}"
             tes_outputs.append({
                 "name": out_name,
@@ -600,7 +605,7 @@ class TESDriver:
         )
 
         poll_interval = 1.0
-        wall_time = job.resources.get("wall_time", self.site.max_wall_seconds)
+        wall_time = job.resources.get("wall_seconds", self.site.max_wall_seconds)
         max_attempts = max(10, int(wall_time / poll_interval))
 
         async def _run() -> str:
@@ -646,11 +651,18 @@ class TESDriver:
                             raise ComputeError(f"TES output {output['name']} was not produced at {local_src}")
                     elif out_url.startswith(("http://", "https://")):
                         try:
+                            from urllib.parse import urlparse
+
                             import httpx
 
                             headers = {}
-                            if self.site.token:
-                                headers["Authorization"] = f"Bearer {self.site.token}"
+                            # Only attach TES bearer token if output destination is same-origin
+                            if self.site.token and self.site.host:
+                                site_parsed = urlparse(self.site.host)
+                                out_parsed = urlparse(out_url)
+                                if (site_parsed.scheme, site_parsed.netloc) == (out_parsed.scheme, out_parsed.netloc):
+                                    headers["Authorization"] = f"Bearer {self.site.token}"
+
                             with httpx.Client(timeout=30.0) as client:
                                 resp = client.get(out_url, headers=headers)
                                 resp.raise_for_status()

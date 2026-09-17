@@ -141,7 +141,10 @@ def build_tes_task(
         existing_urls = {item.get("url") for item in extracted_inputs}
         for item in inputs:
             url = item.get("url")
-            if url not in existing_urls:
+            existing = next((entry for entry in extracted_inputs if entry.get("url") == url), None)
+            if existing is not None:
+                existing.update(item)
+            else:
                 extracted_inputs.append(item)
                 existing_urls.add(url)
     extracted_outputs = _extract_outputs(rcp_task, output_url_prefix=output_url_prefix)
@@ -166,6 +169,7 @@ def build_tes_task(
     tags = {
         "rcp_id": rcp_id,
         "rcp_digest": rcp_digest,
+        "rcp_source_jsonld": canonical_json,
     }
 
     # Pass through existing tags if present
@@ -186,9 +190,9 @@ def build_tes_task(
     if resources:
         tes_res: dict[str, Any] = {}
         if "cpus" in resources:
-            tes_res["cpu_cores"] = int(resources["cpus"])
+            tes_res["cpuCores"] = int(resources["cpus"])
         if "mem_gb" in resources:
-            tes_res["ram_gb"] = float(resources["mem_gb"])
+            tes_res["ramGb"] = float(resources["mem_gb"])
         if tes_res:
             task_payload["resources"] = tes_res
 

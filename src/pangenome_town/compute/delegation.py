@@ -196,6 +196,8 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
             selected = dataclasses.replace(site, datasets=('vcf',), paths={'vcf': data['locations'][site.storage]['vcf']})
             out = town.state_dir / 'executions' / uuid.uuid4().hex
             if selected.driver == "tes":
+                if driver is not None:
+                    raise ComputeError("Custom driver injection is not permitted for TES execution")
                 # ADR 0001: TES dispatch requires a trusted semantic contract gate and source RCP task
                 from ..rcp import contract, pipeline
                 manifest_path = town.city_root / "contract" / f"{town.name}.contract.json"
@@ -206,10 +208,12 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                 task_doc = pipeline.task_document(
                     town,
                     f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
+                    datasets=(f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",),
                     requester=task["requester"],
                     request_id=task["id"],
+                    include_graph=False,
                 )
-                actual_driver = driver or driver_for(selected, gate=gate, rcp_task=task_doc)
+                actual_driver = driver_for(selected, gate=gate, rcp_task=task_doc)
             else:
                 actual_driver = driver or driver_for(selected)
             if hasattr(actual_driver, 'on_progress'):

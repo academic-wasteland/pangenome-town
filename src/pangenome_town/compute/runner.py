@@ -134,11 +134,10 @@ class SemanticGate:
             status = report.get("status", "unknown")
         else:
             try:
-                from ..rcp.pipeline import km_executable
-
-                km_exec = km_executable()
+                import shutil
+                km_exec = shutil.which("km")
                 timeout = target_manifest.timeout_seconds if hasattr(target_manifest, "timeout_seconds") else 60
-                active_reasoner = target_reasoner or (KMRunner(executable=km_exec, timeout_seconds=timeout) if km_exec else None)
+                active_reasoner = target_reasoner or (KMRunner(km_exec, timeout_seconds=timeout) if km_exec else None)
                 if active_reasoner is None:
                     raise SemanticPolicyError("Semantic gating failed: no reasoner available (km not installed)")
                 validator = SemanticValidator(target_manifest, active_reasoner)
@@ -201,10 +200,11 @@ class TESComputeRunner(ComputeRunner):
         self.gate = gate
         self._client = client
         self.headers = {
-            "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if bearer_token:
+            self.headers["Authorization"] = f"Bearer {bearer_token}"
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
