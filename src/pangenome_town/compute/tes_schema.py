@@ -50,7 +50,7 @@ def _extract_inputs(
                 if isinstance(url, str) and url.startswith(("http://", "https://", "s3://", "file://")):
                     add_input(url, path)
             elif isinstance(ds, str):
-                url = storage_map.get(ds) or (ds if ds.startswith(("s3://", "file://")) else None)
+                url = storage_map.get(ds) or (ds if ds.startswith(("http://", "https://", "s3://", "file://")) else None)
                 if url:
                     add_input(url)
 

@@ -553,7 +553,7 @@ class TESDriver:
                         dataset_storage_map[ds_id] = self.site.paths[short_name]
 
         # Map steps with stdout handling and translate paths to container mount paths
-        commands = []
+        commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
         for step in job.steps:
             remapped_argv = []
             for arg in step.argv:
@@ -621,14 +621,33 @@ class TESDriver:
                     break
                 await asyncio.sleep(poll_interval)
             else:
+                try:
+                    await runner.cancel(task_id)
+                except ComputeError:
+                    pass
                 raise ComputeError(f"TES execution timed out polling task {task_id}")
             return task_id
 
         started_time = time.monotonic()
+        async def _execute_and_close() -> str:
+            try:
+                return await _run()
+            finally:
+                await runner.aclose()
+
         try:
-            task_id = asyncio.run(_run())
-        finally:
-            asyncio.run(runner.aclose())
+            import concurrent.futures
+            # If an event loop is already running in this thread, execute in a separate worker thread
+            try:
+                asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    task_id = pool.submit(asyncio.run, _execute_and_close()).result()
+            except RuntimeError:
+                task_id = asyncio.run(_execute_and_close())
+        except Exception as exc:
+            if isinstance(exc, ComputeError):
+                raise
+            raise ComputeError(f"TES execution error: {exc}") from exc
         elapsed_seconds = round(time.monotonic() - started_time, 3)
 
         # Ensure declared outputs exist in fetch_to

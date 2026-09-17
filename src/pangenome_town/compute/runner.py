@@ -155,9 +155,28 @@ class SemanticGate:
         return status
 
     def __call__(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        import inspect
+
+        sig = inspect.signature(fn)
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            rcp_task = kwargs.get("rcp_task")
+            bound = None
+            try:
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+            except TypeError:
+                pass
+
+            rcp_task = None
+            if bound:
+                for param_name in ("rcp_task", "task", "document", "task_doc"):
+                    val = bound.arguments.get(param_name)
+                    if isinstance(val, dict) and ("@id" in val or "ResearchTask" in str(val.get("@type", ""))):
+                        rcp_task = val
+                        break
+            if rcp_task is None:
+                rcp_task = kwargs.get("rcp_task") or kwargs.get("task") or kwargs.get("document")
             if rcp_task is None:
                 for arg in args:
                     if isinstance(arg, dict) and (
@@ -183,6 +202,9 @@ class ComputeRunner:
 
     async def poll_status(self, task_id: str) -> str:
         raise NotImplementedError
+
+    async def cancel(self, task_id: str) -> None:
+        pass
 
 
 class TESComputeRunner(ComputeRunner):
@@ -264,6 +286,12 @@ class TESComputeRunner(ComputeRunner):
                 f"TES dispatch digest mismatch: payload has {expected_digest}, "
                 f"but task computed {actual_digest}"
             )
+
+        # Verify rcp_source_jsonld in tags matches verbatim canonical JSON if present
+        source_jsonld = tags.get("rcp_source_jsonld")
+        if source_jsonld and source_jsonld != (canonical_bytes.decode("utf-8") if isinstance(canonical_bytes, bytes) else canonical_bytes):
+            raise SemanticPolicyError("TES dispatch payload rcp_source_jsonld does not match verbatim canonical task")
+
         self.gate.evaluate(rcp_task)
 
         url = f"{self.endpoint_url}/v1/tasks"
@@ -287,9 +315,9 @@ class TESComputeRunner(ComputeRunner):
         except ValueError as exc:
             raise ComputeError("TES dispatch returned invalid JSON") from exc
 
-        if not isinstance(data, dict) or "id" not in data:
+        if not isinstance(data, dict) or not data.get("id") or not isinstance(data["id"], str):
             raise ComputeError(f"TES dispatch returned invalid response: {data}")
-        return str(data["id"])
+        return data["id"]
 
     async def poll_status(self, task_id: str) -> str:
         """Sends an HTTP GET to {endpoint_url}/v1/tasks/{task_id}. Returns ComputeState enum value."""
@@ -316,6 +344,16 @@ class TESComputeRunner(ComputeRunner):
         raw_state = data.get("state", "UNKNOWN") if isinstance(data, dict) else "UNKNOWN"
         state = TES_STATE_MAPPING.get(raw_state, ComputeState.UNKNOWN)
         return state.value
+
+    async def cancel(self, task_id: str) -> None:
+        """Sends an HTTP POST to {endpoint_url}/v1/tasks/{task_id}:cancel."""
+        url = f"{self.endpoint_url}/v1/tasks/{task_id}:cancel"
+        client = await self._get_client()
+        try:
+            response = await client.post(url, headers=self.headers)
+            response.raise_for_status()
+        except (httpx.HTTPError, httpx.RequestError):
+            return  # Best effort cancellation
 
 AGGREGATE_HEADER = "CHROM\tPOS\tREF\tALT\tallele_count\tallele_number\talt_frequency\n"
 # The same aggregation as `aggregate_genotypes`, run on a remote site so individual genotypes never leave it.

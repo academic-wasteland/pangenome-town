@@ -152,8 +152,13 @@ def authorize(town, task, grants, *, now=None):
         location = data.get('locations', {}).get(site.storage)
         if not isinstance(location, dict) or not location.get('vcf'):
             raise ComputeError(f'dataset {data["id"]} not available at storage {site.storage}')
-        if not str(location['vcf']).startswith('/') or '..' in str(location['vcf']):
-            raise ComputeError('dataset location must be an absolute configured path')
+        loc_vcf = str(location['vcf'])
+        if site.driver == 'tes':
+            if not loc_vcf.startswith(('http://', 'https://', 's3://', 'file://', '/')) or '..' in loc_vcf:
+                raise ComputeError('dataset location for TES must be an absolute path or URI without ".."')
+        else:
+            if not loc_vcf.startswith('/') or '..' in loc_vcf:
+                raise ComputeError('dataset location must be an absolute configured path')
     return datasets, region, site
 
 
@@ -205,10 +210,25 @@ def execute(town, task, grants, *, log=None, message_id=None, driver=None):
                     raise SemanticPolicyError(f"TES execution requires town contract manifest at {manifest_path}")
                 manifest = contract.ContractManifest.load(manifest_path)
                 gate = SemanticGate(manifest=manifest)
+                ds_entity = {
+                    "@id": f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",
+                    "@type": "PublicDataset",
+                }
+                reg_parsed = None
+                if region:
+                    from ..tools.graph import Region
+                    reg_obj = Region.parse(region, town.default_reference)
+                    reg_parsed = {
+                        "@type": "GenomicRegion",
+                        "referenceName": reg_obj.reference or town.default_reference,
+                        "start": reg_obj.start or 0,
+                        "end": reg_obj.end or 1000000,
+                    }
                 task_doc = pipeline.task_document(
                     town,
                     f"{contract.PG}{WORKFLOW_TASK_CLASSES.get(task['workflow'], 'ResearchTask')}",
-                    datasets=(f"https://w3id.org/academic-wasteland/{town.name}/dataset/{data['id']}",),
+                    datasets=(ds_entity,),
+                    region=reg_parsed,
                     requester=task["requester"],
                     request_id=task["id"],
                     include_graph=False,

@@ -463,12 +463,12 @@ class Node:
             manifest = contract.ContractManifest.load(manifest_path) if manifest_path.exists() else None
             axioms = facts.axioms if facts else ()
             probes = facts.probes if facts else None
-            gate_reasoner = lambda doc: self.validator.validate(doc, receiver_assertions=axioms, probes=probes) if self.validator else {"status": "entailed"}
+            gate_reasoner = lambda doc: self.validator.validate(doc, receiver_assertions=axioms, probes=probes) if self.validator else {"status": "indeterminate"}
             driver = compute_runner.driver_for(site, gate=compute_runner.SemanticGate(manifest=manifest, reasoner=gate_reasoner), rcp_task=document)
         try:
             result = compute_runner.run_task(self.town, template_name=template, region=region, out_dir=out_dir, spec=spec,
-                                             driver=driver, extra_datasets=extra,
-                                             on_start=lambda site: self._execution_started(record, template, "compute", site))
+                                             site=site, driver=driver, extra_datasets=extra,
+                                             on_start=lambda s: self._execution_started(record, template, "compute", s))
         except ComputeError as error:
             text = str(error)
             if record.gates is not None:

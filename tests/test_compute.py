@@ -991,7 +991,14 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         if isinstance(tampered_bytes, str):
             tampered_bytes = tampered_bytes.encode("utf-8")
         tampered_digest = f"sha256:{hashlib.sha256(tampered_bytes).hexdigest()}"
-        mismatched_payload = dict(tes_payload, tags=dict(tes_payload.get("tags", {}), rcp_digest=tampered_digest))
+        mismatched_payload = dict(
+            tes_payload,
+            tags=dict(
+                tes_payload.get("tags", {}),
+                rcp_digest=tampered_digest,
+                rcp_source_jsonld=tampered_bytes.decode("utf-8"),
+            ),
+        )
         with pytest.raises(SemanticPolicyError, match="does not match trusted manifest id"):
             await runner.dispatch(mismatched_payload, rcp_task=contract_mismatch_task)
         assert len(tasks_db) == initial_tasks_count
@@ -1014,6 +1021,46 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         assert receipt["payload"]["name"] == tes_payload["name"]
         assert len(receipt["outputs"]) == 1
         assert receipt["outputs"][0]["url"].endswith(".vg")
+
+        # 5. TESDriver.run test exercising driver-level path remapping, execution, and artifact retrieval
+        from pangenome_town.compute.sites import Site, TESDriver
+        from pangenome_town.compute.workflows import RenderedJob, Step
+
+        tes_site = Site(
+            name="tes_site",
+            driver="tes",
+            host=endpoint,
+            token=auth_token,
+            workdir="/tmp/tes-work",
+            output_url_prefix=f"{endpoint}/files",
+            paths={"graph": "https://example.org/toy.gbz"},
+        )
+
+        dummy_out_file = tmp_path / "out_chunk.vg"
+        dummy_out_file.write_bytes(b"dummy graph bytes")
+
+        driver = TESDriver(
+            tes_site,
+            gate=gate,
+            rcp_task=rcp_task,
+            output_url_prefix=f"file://{tmp_path.resolve()}",
+        )
+
+        job = RenderedJob(
+            workflow="region-extract",
+            steps=[
+                Step(id="step-1", argv=["vg", "chunk", "-x", "https://example.org/toy.gbz"], stdout="/tmp/work/123/out_chunk.vg")
+            ],
+            work_dir="/tmp/work/123",
+            outputs=[{"name": "out_chunk.vg", "path": str(dummy_out_file), "class": "GraphSubgraphChunk", "release": False}],
+            resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
+        )
+
+        fetch_dir = tmp_path / "fetched"
+        res = driver.run(job, fetch_to=fetch_dir)
+        assert res.returncode == 0
+        assert "out_chunk.vg" in res.outputs
+        assert res.outputs["out_chunk.vg"].exists()
 
     finally:
         server.shutdown()
