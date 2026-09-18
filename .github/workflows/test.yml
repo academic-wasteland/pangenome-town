@@ -18,7 +18,7 @@ jobs:
       - run: python -m pip install '.[dev,literature]'
       - uses: actions/checkout@v4
         with:
-          repository: micheldumontier/wasteland-starter-pack
+          repository: micheldumontier/zerzura
           ref: fa77cd1b50e78fa6d1056d6f4ba2665eb0f36f5d
           path: external/zerzura
       - run: python -m pytest -q
