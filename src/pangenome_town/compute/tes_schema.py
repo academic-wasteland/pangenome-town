@@ -211,9 +211,9 @@ def build_tes_task(
     if resources:
         tes_res: dict[str, Any] = {}
         if "cpus" in resources:
-            tes_res["cpuCores"] = int(resources["cpus"])
+            tes_res["cpu_cores"] = int(resources["cpus"])
         if "mem_gb" in resources:
-            tes_res["ramGb"] = float(resources["mem_gb"])
+            tes_res["ram_gb"] = float(resources["mem_gb"])
         if tes_res:
             task_payload["resources"] = tes_res
 

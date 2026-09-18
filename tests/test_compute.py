@@ -829,7 +829,7 @@ async def test_vg_chunk_tes_dispatch(towns, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_live_tes_opt_in_dispatch(monkeypatch):
+async def test_live_tes_opt_in_connectivity(monkeypatch):
     """Opt-in live GA4GH TES v1.1 status probe and dispatch test using environment variables.
 
     Set AW_LIVE_TES_ENDPOINT and AW_LIVE_TES_TOKEN to execute against a real remote service.
@@ -856,7 +856,8 @@ async def test_live_tes_opt_in_dispatch(monkeypatch):
 async def test_tes_local_http_endpoint_integration(towns, tmp_path):
     """Real local HTTP TES test endpoint exercising submission, state transitions,
 
-    exact-task semantic gating, and receipt artifacts without mocks.
+    task/digest binding and receipt artifacts. The reasoner and executor output
+    are stubs; this is transport coverage, not a real vg execution test.
     """
     import json
     import threading
@@ -1109,7 +1110,12 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         )
 
         fetch_dir = tmp_path / "fetched"
+        dispatched, progress = [], []
+        driver.on_dispatched = lambda: dispatched.append(True)
+        driver.on_progress = lambda **detail: progress.append(detail)
         res = driver.run(job, fetch_to=fetch_dir)
+        assert dispatched == [True]
+        assert [p['state'] for p in progress] == ['RUNNING', 'COMPLETE']
         assert res.returncode == 0
         assert "out_chunk.vg" in res.outputs
         assert res.outputs["out_chunk.vg"].exists()
@@ -1161,8 +1167,10 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
             outputs=[{"name": "../../evil.txt", "path": str(tmp_path / "evil.txt"), "class": "GraphSubgraphChunk", "release": False}],
             resources={"wall_seconds": 30, "cpus": 2, "mem_gb": 4},
         )
+        submissions_before_traversal = len(tasks_db)
         with pytest.raises(ComputeError, match="Invalid output name with path components"):
             driver.run(traversal_job, fetch_to=fetch_dir)
+        assert len(tasks_db) == submissions_before_traversal
 
         # 9. Negative test: file:// output outside permitted root directories rejected
         escaping_site = Site(
@@ -1187,3 +1195,17 @@ async def test_tes_local_http_endpoint_integration(towns, tmp_path):
         server.shutdown()
         server.server_close()
 
+
+
+def test_tes_resource_wire_names():
+    from pangenome_town.compute.tes_schema import build_tes_task
+    payload = build_tes_task({'@id': 'urn:test:task'}, 'example/image:1', ['true'],
+                             resources={'cpus': 2, 'mem_gb': 4})
+    assert payload['resources'] == {'cpu_cores': 2, 'ram_gb': 4.0}
+
+
+def test_tes_driver_exposes_lifecycle_hooks():
+    from pangenome_town.compute.sites import Site, TESDriver
+    driver = TESDriver(Site(name='tes', driver='tes', host='http://127.0.0.1:8000'))
+    assert driver.on_dispatched is None
+    assert driver.on_progress is None

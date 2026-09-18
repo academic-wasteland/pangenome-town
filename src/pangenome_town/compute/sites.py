@@ -511,6 +511,8 @@ class TESDriver:
     def __init__(self, site: Site, **options: Any) -> None:
         self.site = site
         self.options = options
+        self.on_dispatched = None
+        self.on_progress = None
 
     def run(self, job: RenderedJob, *, fetch_to: Path) -> JobResult:
         import asyncio
@@ -625,6 +627,11 @@ class TESDriver:
         commands = [f"mkdir -p {container_work_dir} {container_output_dir}"]
         single_direct_step = None
         fetched = _fetched_outputs(job)
+        for output in fetched:
+            name = output["name"]
+            if (not isinstance(name, str) or not name or name in {".", ".."}
+                    or Path(name).name != name or "\\" in name or "\x00" in name):
+                raise ComputeError(f"Invalid output name with path components: {name!r}")
 
         if len(job.steps) == 1 and not fetched:
             # Single step without intermediate workdir-to-output copies can run natively
@@ -711,6 +718,8 @@ class TESDriver:
             while attempts < max_attempts:
                 attempts += 1
                 status = await runner.poll_status(task_id)
+                if callable(self.on_progress):
+                    self.on_progress(state=status, backend_id=task_id)
                 if status == "UNKNOWN":
                     # Allow transient UNKNOWN (e.g. initial replica lag) up to 3 times
                     unknown_grace_count += 1
