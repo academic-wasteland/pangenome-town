@@ -91,8 +91,8 @@ def build(output, records, prefix):
             page = page.replace('Real Slurm execution · demonstration IRB credentials', 'Recorded real Slurm execution · demonstration IRB credentials')
             page = page.replace('Scheduler states are read from DDBJ, not scripted.', 'Scheduler observations were recorded from the real DDBJ run.')
         (output / dest).write_text(page)
-    import wasteland
-    (output / 'index.html').write_text((Path(wasteland.__file__).with_name('observatory.html')).read_text())
+    from wasteland.public_site import write
+    write(output)
 
 
 def main():
