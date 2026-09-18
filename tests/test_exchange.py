@@ -71,3 +71,14 @@ def test_rcp_mirrors_are_not_pending_questions(tmp_path):
         assert [m["id"] for m in log.pending_questions("yamatai")] == [plain.id]
     finally:
         log.close()
+
+
+def test_public_envelope_roundtrip_and_private_reply():
+    question = Envelope.new("question", "ubar", "yamatai", {"text": "Public"}, visibility="public")
+    assert Envelope.from_dict(question.to_dict()).visibility == "public"
+    answer = Envelope.new("answer", "yamatai", "ubar", {"text": "Private reply"}, in_reply_to=question.id)
+    assert "visibility" not in answer.to_dict()
+    assert Envelope.from_dict(answer.to_dict()).visibility == "private"
+    for value in (True, None, [], "PUBLIC"):
+        with pytest.raises(EnvelopeError):
+            Envelope.from_dict({**question.to_dict(), "visibility": value})

@@ -74,6 +74,16 @@ class CockpitConversations(RelayHub):
 
     def _dispatch(self, thread, request_id, to, payload):
         try:
+            if payload.get('_visibility') == 'public':
+                town = self.state.towns[thread['via']]
+                wire = {k:v for k,v in payload.items() if k != '_visibility'}
+                message = Envelope.new('question', town.name, to, wire, visibility='public')
+                message = Envelope.from_dict(dict(message.to_dict(), id=request_id))
+                peers.send(town, message, self.state.log)
+                self.store.add(thread['id'], sender=town.name, recipient=to + '/' + payload['resident'],
+                               text='Public message sent through the relay. Replies remain private unless separately published.',
+                               state='sent', parent=request_id)
+                return
             if payload.get('phenotypes') and to == 'ubar' and payload['resident'] == 'contact':
                 self._diagnose(thread, request_id, payload)
                 return

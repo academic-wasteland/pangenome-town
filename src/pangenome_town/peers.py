@@ -24,6 +24,10 @@ def envoy_url(town: TownConfig, peer_city: str, path: str = "/v0/messages") -> s
 
 
 def send(town: TownConfig, envelope: Envelope, log: ExchangeLog | None = None) -> dict[str, Any]:
+    if envelope.visibility == "public":
+        if not (town.extra.get("federation") or {}).get("state"):
+            raise PeerError("Public messages require a configured wasteland relay.")
+        return _send_federated(town, envelope, log)
     if envelope.recipient not in town.peers and (town.extra.get("federation") or {}).get("state"):
         return _send_federated(town, envelope, log)
     peer_city = town.peer_city(envelope.recipient)

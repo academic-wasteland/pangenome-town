@@ -99,6 +99,7 @@ class Envelope:
     in_reply_to: str | None = None
     attachments: tuple[Attachment, ...] = field(default_factory=tuple)
     schema_version: int = SCHEMA_VERSION
+    visibility: str = "private"
 
     @classmethod
     def new(
@@ -110,6 +111,7 @@ class Envelope:
         *,
         in_reply_to: str | None = None,
         attachments: tuple[Attachment, ...] = (),
+        visibility: str = "private",
     ) -> Envelope:
         envelope = cls(
             id=f"urn:uuid:{uuid.uuid4()}",
@@ -120,11 +122,14 @@ class Envelope:
             body=dict(body),
             in_reply_to=in_reply_to,
             attachments=tuple(attachments),
+            visibility=visibility,
         )
         envelope.validate()
         return envelope
 
     def validate(self) -> None:
+        if self.visibility not in ("public", "private"):
+            raise EnvelopeError("visibility must be public or private")
         if self.kind not in KINDS:
             raise EnvelopeError(f"kind must be one of {KINDS}")
         if not self.id.startswith("urn:uuid:"):
@@ -147,6 +152,7 @@ class Envelope:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **({"visibility": self.visibility} if self.visibility == "public" else {}),
             "schema_version": self.schema_version,
             "id": self.id,
             "kind": self.kind,
@@ -173,6 +179,7 @@ class Envelope:
                 in_reply_to=data.get("in_reply_to"),
                 attachments=tuple(Attachment.from_dict(item) for item in data.get("attachments") or []),
                 schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
+                visibility=data.get("visibility", "private"),
             )
         except KeyError as error:
             raise EnvelopeError(f"envelope is missing {error.args[0]}") from error
