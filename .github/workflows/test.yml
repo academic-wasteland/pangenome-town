@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: micheldumontier/wasteland-starter-pack
-          ref: 4c03774a0a9ed701d30648f94e56c084ca95d08a
+          ref: fa77cd1b50e78fa6d1056d6f4ba2665eb0f36f5d
           path: external/zerzura
       - run: python -m pytest -q
         env:

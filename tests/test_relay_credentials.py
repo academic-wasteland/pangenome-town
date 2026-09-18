@@ -179,7 +179,7 @@ def zerzura_modules(source):
             for name in ('camelot_trust','mimic_presentation','credential_status')]
 
 
-def test_zerzura_independent_verifiers(authority, tmp_path):
+def test_zerzura_independent_verifiers(authority, tmp_path, monkeypatch):
     import os
     from pathlib import Path
     source = os.environ.get('ZERZURA_SOURCE')
@@ -190,6 +190,10 @@ def test_zerzura_independent_verifiers(authority, tmp_path):
     key = keys.generate()
     _, _, doc = apply(reg,relay,key)
     record = {'issuers':[issuer],'source':'explicit test trust configuration','fetched':cred.iso(datetime.now(UTC))}
+    monkeypatch.setenv('WASTELAND_CAMELOT_ROOT_ISSUERS', issuer['id'] + '-different')
+    with pytest.raises(trust.TrustError, match='not accredited'):
+        trust.verify_credential(doc, record=record)
+    monkeypatch.setenv('WASTELAND_CAMELOT_ROOT_ISSUERS', issuer['id'])
     assert trust.verify_credential(doc,record=record)['verified']
     store = presentation.ChallengeStore(tmp_path/'zerzura.sqlite')
     query = {'group_by':['sex'],'aggregate':'count'}
