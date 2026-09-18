@@ -159,8 +159,34 @@ nav.jump a{white-space:nowrap;border:0;border-bottom:3px solid transparent;borde
 </section>
 
 <section id="decisions" data-page="governance" hidden>
-  <h2>Decisions waiting for you <span class="muted">(credential applications; decide on the command line)</span></h2>
+  <h2>Decisions waiting for you <span class="muted">(review, approve or deny here)</span></h2>
+  <div id="decision-result" role="status" aria-live="polite"></div>
   <div id="decisions-body"></div>
+  <dialog id="decision-dialog" style="width:min(620px,90vw);background:var(--card);color:var(--fg);border:1px solid var(--line);padding:24px;max-height:90vh;overflow:auto">
+    <form id="decision-form">
+      <h2 id="decision-title"></h2>
+      <div id="decision-summary" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto"></div>
+      <p id="decision-operator"></p>
+      <div id="approval-fields">
+        <label>Valid for <select id="decision-days"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>
+        <p id="decision-scope"></p>
+        <label style="display:block">Evidence reviewed / private review notes
+          <textarea id="decision-note" rows="3" maxlength="4000" style="width:100%" placeholder="Summarize the evidence you actually reviewed; do not upload documents here."></textarea>
+        </label>
+        <label style="display:block">Private evidence reference (optional)
+          <input id="decision-evidence" maxlength="4000" style="width:100%" placeholder="Reference to your existing evidence record">
+        </label>
+        <p><label><input type="checkbox" id="decision-reviewed" required> I reviewed the request and confirm the evidence supports this exact claim.</label></p>
+      </div>
+      <div id="denial-fields" hidden>
+        <label>Reason <select id="decision-reason"><option value="">Choose a reason</option><option>Insufficient evidence</option><option>Outside this issuer’s scope</option><option>Duplicate application</option><option>Applicant withdrew request</option><option value="other">Other</option></select></label>
+        <label style="display:block">Additional explanation <textarea id="decision-denial-note" rows="2" maxlength="1800" style="width:100%"></textarea></label>
+      </div>
+      <p id="decision-error" role="alert" class="bad"></p>
+      <button type="button" id="decision-cancel">Cancel</button>
+      <button type="submit" id="decision-submit">Approve credential</button>
+    </form>
+  </dialog>
 </section>
 
 <section id="ledger-sec" data-page="governance" hidden>
@@ -649,18 +675,64 @@ async function residentAction(d){
 }
 
 /* ---------- decisions, trust, AgentsView, interfaces ---------- */
+let decisionApplications = new Map(), activeDecision = null, decisionBusy = false;
 async function loadDecisions(){
   const response = await fetch("/api/decisions"); if (!response.ok) return; const j = await response.json();
+  decisionApplications = new Map(j.authorities.flatMap(a => (a.pending || []).map(p => [a.town + '/' + p.id, {...p, town:a.town, operator:a.operator}])));
   const cards = j.authorities.flatMap(a => (a.pending || []).map(p => `<div class="card" style="margin-bottom:8px">
     <div><strong>${esc(p.credential_type)}</strong> for <span class="mono">${esc(short(p.holder))}</span> from <strong>${esc(p.issuer)}</strong> <span class="muted mono">${esc(p.id)} · ${esc(p.created)}</span></div>
     <div class="muted" style="margin-top:2px">${Object.entries(p.subject_fields || {}).map(([k, v]) => `${esc(k)}: ${esc(short(v))}`).join(" · ")}</div>
     <div style="margin-top:4px">${esc(p.purpose)}</div>
     ${(p.recommendations || []).map(r => `<div class="refusal" style="border-color:var(${r.verdict === "approve" ? "--ok" : r.verdict === "deny" ? "--bad" : "--warn"})"><div class="k"><strong>${esc(r.from)}</strong> recommends <span class="status ${r.verdict === "approve" ? "ok" : r.verdict === "deny" ? "bad" : "warn"}">${esc(r.verdict)}</span> <span class="muted">${esc(r.created_at || "")}</span></div><pre style="white-space:pre-wrap;max-height:180px">${esc(r.body)}</pre></div>`).join("") || '<div class="muted" style="margin-top:4px">no resident recommendation yet: mail irb or dac in Camelot from the Residents panel</div>'}
-    <div style="margin-top:6px">${["approve", "deny"].map(k => `<div><span class="muted">${k}:</span> <code class="copy" title="click to copy">${esc(p.commands[k])}</code></div>`).join("")}</div></div>`));
+    <div style="margin-top:10px"><button data-decision="approve" data-key="${esc(a.town+'/'+p.id)}">Review & approve</button> <button data-decision="deny" data-key="${esc(a.town+'/'+p.id)}">Deny</button> <span class="muted">${esc(a.display)}</span></div>
+    <details style="margin-top:6px"><summary>CLI alternative</summary>${["approve", "deny"].map(k => `<div><span class="muted">${k}:</span> <code class="copy" title="click to copy">${esc(p.commands[k])}</code></div>`).join("")}</details></div>`));
   const ev = (j.events || []).slice(0, 12).map(e => `<li><span class="mono muted">${esc(fmtTs(e.ts))}</span> <strong>${esc(e.town)}</strong> ${esc(e.kind.replaceAll("_", " "))} <span class="muted mono">${esc(JSON.stringify(e.detail || {}).slice(0, 140))}</span></li>`).join("");
   $("#decisions-body").innerHTML = (cards.join("") || '<div class="muted">nothing waiting</div>') + (ev ? `<h2>Recent authority events</h2><ul class="tl">${ev}</ul>` : "");
   $("#decisions-body").querySelectorAll(".copy").forEach(el => el.addEventListener("click", () => copyText(el.textContent)));
 }
+$('#decisions-body').addEventListener('click', e => {
+  const button = e.target.closest('[data-decision]'); if (!button || decisionBusy) return;
+  const application = decisionApplications.get(button.dataset.key); if (!application) return;
+  activeDecision = {...application, action:button.dataset.decision};
+  $('#decision-form').reset(); $('#decision-error').textContent = '';
+  const approving = activeDecision.action === 'approve';
+  $('#decision-title').textContent = approving ? 'Review & approve credential' : 'Deny application';
+  $('#decision-summary').textContent = `${application.credential_type} for ${application.holder}\nIssuer: ${application.issuer} · ${application.town}\n${Object.entries(application.subject_fields || {}).map(([k,v])=>k+': '+v).join('\n')}\n\n${application.purpose}`;
+  $('#decision-operator').textContent = 'Recorded reviewer: ' + (application.operator || 'No authority operator configured');
+  $('#approval-fields').hidden = !approving; $('#denial-fields').hidden = approving;
+  $('#decision-reviewed').required = approving;
+  $('#decision-reason').required = !approving;
+  $('#decision-scope').textContent = application.synthetic_test ? 'Synthetic interoperability test only. No real qualification or data access is granted. You can approve after reviewing without entering a reference; a private review record is saved automatically.' : 'Approval attests this exact claim. Record the evidence you reviewed or a private reference. Review details stay in the local authority audit.';
+  $('#decision-submit').textContent = approving ? 'Approve credential' : 'Deny application';
+  $('#decision-submit').disabled = !application.operator;
+  $('#decision-dialog').showModal();
+});
+$('#decision-cancel').onclick = () => { if (!decisionBusy) $('#decision-dialog').close(); };
+$('#decision-dialog').addEventListener('cancel', e => { if (decisionBusy) e.preventDefault(); });
+$('#decision-form').onsubmit = async e => {
+  e.preventDefault(); if (!activeDecision || decisionBusy) return;
+  const a = activeDecision, payload = {town:a.town, application:a.id};
+  $('#decision-error').textContent = '';
+  if (a.action === 'approve') {
+    Object.assign(payload, {valid_days:Number($('#decision-days').value), reviewed:$('#decision-reviewed').checked,
+      review_note:$('#decision-note').value.trim(), evidence_ref:$('#decision-evidence').value.trim()});
+    if (!a.synthetic_test && !payload.review_note && !payload.evidence_ref) { $('#decision-error').textContent='Record the evidence you reviewed or its private reference.'; return; }
+  } else {
+    const reason = $('#decision-reason').value, note = $('#decision-denial-note').value.trim();
+    if (!reason || (reason === 'other' && !note)) { $('#decision-error').textContent='Choose a reason or provide an explanation.'; return; }
+    payload.reason = reason === 'other' ? note : reason + (note ? ': '+note : '');
+  }
+  decisionBusy = true; $('#decision-submit').disabled = true; $('#decision-cancel').disabled = true;
+  try {
+    const response = await fetch('/api/authority/'+a.action, {method:'POST', headers:{'Content-Type':'application/json','X-Cockpit-Token':TOKEN}, body:JSON.stringify(payload)});
+    const result = await response.json();
+    if (!response.ok || !result.ok) { $('#decision-error').textContent = result.error || result.detail || 'Decision failed. Refresh before retrying.'; return; }
+    $('#decision-dialog').close();
+    $('#decision-result').textContent = `${a.id}: ${result.state}.` + (result.valid_until ? ` Valid until ${result.valid_until}. Credential: ${result.credential}` : '');
+    await Promise.all([loadDecisions(),loadAuthority()]);
+  } catch (error) { $('#decision-error').textContent='Could not confirm the result. Refresh the decisions panel before retrying.'; }
+  finally { decisionBusy=false; $('#decision-submit').disabled=false; $('#decision-cancel').disabled=false; }
+};
 async function loadTrust(){
   const j = await (await fetch("/api/trust")).json();
   $("#trust-body").innerHTML = j.towns.map(t => t.error ? `<div class="bad">${esc(t.town)}: ${esc(t.error)}</div>` : `<div class="card"><div><strong>${esc(t.display)}</strong></div>

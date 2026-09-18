@@ -127,3 +127,46 @@ def test_approve_twice_is_refused(camelot, registrar_url, capsys):
     assert run(capsys, "--town", camelot, "authority", "approve", application["id"])[0] == 0
     code, error = run(capsys, "--town", camelot, "authority", "approve", application["id"])
     assert code == 2 and "not pending" in error["detail"]
+
+
+def test_notified_approval_works_from_elsewhere_and_requires_review(camelot, capsys, tmp_path, monkeypatch):
+    import os
+    import shlex
+    import subprocess
+    import sys
+    # A configuration need not live inside city_root; preserve the actual loaded file.
+    separate = tmp_path / 'separate config'
+    separate.mkdir()
+    special = separate / 'authority config.toml'
+    special.write_text(camelot.read_text().replace('[town]', f'[town]\ncity_root = "{camelot.parent}"').replace('registry = "registry"', f'registry = "{camelot.parent / "registry"}"'))
+    _issuers(capsys, special)
+    town = config.load(special)
+    registry = cli_resources.registry_for(town, SimpleNamespace(registry=None, key_dir=None))
+    from pangenome_town.authority import keys
+    key = keys.generate()
+    application = registry.apply(holder=HOLDER, holder_key_text=keys.public_key_text(key), credential_type='Qualification',
+                                 issuer_slug='dac', subject_fields={'qualification': 'SyntheticRelayTestOnly'}, purpose='Synthetic test only')
+    application['relay_sender'] = 'zerzura'
+    registry._app_path(application['id']).write_text(json.dumps(application))
+    sent = []
+    monkeypatch.setattr(cli_resources.subprocess, 'run', lambda args, **kwargs: sent.append(args))
+    cli_resources.notify_pending(town, registry)
+    body = sent[0][sent[0].index('-m') + 1]
+    command = cli_resources.review_commands(town, application)['approve']
+    assert command in body and shlex.quote(str(special)) in command
+    from pangenome_town.dashboard import DashboardState
+    state = DashboardState([town])
+    monkeypatch.setattr(state, 'mail_list', lambda name: {'messages': []})
+    assert state.decisions()['authorities'][0]['pending'][0]['commands']['approve'] == command
+    monkeypatch.undo()
+    # Invoke the real CLI in a subprocess, from an unrelated directory.
+    command = command.replace('pangenome-town ', shlex.quote(sys.executable)+' -m pangenome_town.cli ', 1)
+    env = dict(os.environ)
+    env.pop('PT_TOWN_TOML', None); env.pop('EVIDENCE_REF', None)
+    refused = subprocess.run(['bash', '-c', command], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert refused.returncode != 0 and 'Set EVIDENCE_REF' in refused.stderr
+    assert registry.application(application['id'])['state'] == 'pending'
+    env['EVIDENCE_REF'] = 'private-review:synthetic-test'
+    approved = subprocess.run(['bash', '-c', command], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert approved.returncode == 0, approved.stderr + approved.stdout
+    assert registry.application(application['id'])['state'] == 'approved'

@@ -3,7 +3,8 @@
 Public material (issuer keys, accreditations, credentials, revocations) lives
 under `root`; private issuer keys live under `key_dir` with mode 0600 and never
 leave it. The HTTP surface is read-only apart from submitting applications:
-approving, denying, and revoking are human decisions made through the CLI.
+approving and denying are operator decisions made through the CLI or protected
+local cockpit; revocation remains available through the CLI.
 """
 
 from __future__ import annotations

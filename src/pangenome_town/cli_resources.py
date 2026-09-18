@@ -1,7 +1,7 @@
 """CLI handlers for resources and credentials: Camelot (authority), holders (researchers), compute (riggers).
 
-Human decisions (approve, deny, revoke) exist only here, never over HTTP, so no agent or peer can issue a
-credential. Holder keys live in ~/.gc/holders/<slug>.key and credentials in ~/.gc/holders/<slug>/credentials/.
+The CLI provides operator decisions (approve, deny, revoke); the protected local cockpit
+also supports review and approval/denial. No peer-facing registrar endpoint can issue a credential. Holder keys live in ~/.gc/holders/<slug>.key and credentials in ~/.gc/holders/<slug>/credentials/.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import urllib.error
@@ -207,6 +208,20 @@ def serve_authority(town: config.TownConfig, registry: registrar.Registry, socke
         server.serve_forever()
 
 
+def review_commands(town: config.TownConfig, application: dict[str, Any]) -> dict[str, str]:
+    """Commands work outside the town directory and never invent review evidence."""
+    path = town.config_path or town.city_root / "town.toml"
+    prefix = shlex.join(["pangenome-town", "--town", str(path.resolve()), "authority"])
+    app_id = shlex.quote(application["id"])
+    approve = f"{prefix} approve {app_id}"
+    if application.get("relay_sender"):
+        approve += ' --evidence-ref "${EVIDENCE_REF:?Set EVIDENCE_REF to your private review reference first}"'
+    return {
+        "approve": approve,
+        "deny": f'{prefix} deny {app_id} --reason "${{DENIAL_REASON:?Set DENIAL_REASON first}}"',
+    }
+
+
 def notify_pending(town: config.TownConfig, registry: registrar.Registry, *, dry_run: bool = False) -> list[dict[str, Any]]:
     """Mail the human operator once per new pending application."""
     state_path = town.state_dir / "authority" / "notified.json"
@@ -215,10 +230,12 @@ def notify_pending(town: config.TownConfig, registry: registrar.Registry, *, dry
     for application in registry.applications("pending"):
         if application["id"] in seen:
             continue
-        subject = f"Camelot: {application['credential_type']} application {application['id']}"
+        commands = review_commands(town, application)
+        subject = f"{town.display}: {application['credential_type']} application {application['id']}"
         body = (f"Holder: {application['holder']}\nIssuer: {application['issuer']}\nFields: {json.dumps(application['subject_fields'])}\n"
-                f"Purpose: {application['purpose']}\n\nDecide with:\n  pangenome-town authority approve {application['id']}\n"
-                f"  pangenome-town authority deny {application['id']} --reason \"...\"\n")
+                f"Purpose: {application['purpose']}\n\nReview the evidence before approving. For a relay application, "
+                f"set EVIDENCE_REF to the private review record first.\n\nDecide with:\n  {commands['approve']}\n"
+                f"  {commands['deny']}\n")
         if not dry_run:
             subprocess.run(["gc", "mail", "send", "human", "-s", subject, "-m", body], cwd=town.city_root, capture_output=True, text=True, check=False, timeout=60)
             seen.add(application["id"])

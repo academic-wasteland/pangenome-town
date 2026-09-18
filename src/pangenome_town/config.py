@@ -33,6 +33,7 @@ class TownConfig:
     exchange_db: Path
     supervisor_url: str
     state_dir: Path
+    config_path: Path | None = None
     citation: str = ""
     extra: dict = field(default_factory=dict)
     kind: str = "pangenome"  # "pangenome" towns serve a graph; "authority" towns (Camelot) issue credentials
@@ -89,6 +90,7 @@ def load(path: Path | str) -> TownConfig:
     exchange = data.get("exchange") or {}
     state_dir = _path(base, exchange.get("state_dir")) or (base / ".gc" / "town")
     return TownConfig(
+        config_path=path.resolve(),
         name=name,
         display=str(town.get("display") or name),
         population=str(town.get("population") or ""),

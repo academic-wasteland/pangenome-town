@@ -454,15 +454,16 @@ class DashboardState:
             except Exception as error:  # noqa: BLE001
                 result.append({"town": town.name, "error": f"{type(error).__name__}: {error}"})
                 continue
+            from .cli_resources import review_commands
+            from .authority.review import synthetic_test
             pending = []
             for app in applications:
                 if app.get("state") != "pending":
                     continue
                 pending.append({key: app.get(key) for key in ("id", "credential_type", "issuer", "holder", "created", "subject_fields")}
-                               | {"purpose": str(app.get("purpose") or "")[:400], "recommendations": recommendations.get(app["id"], []),
-                                  "commands": {"approve": f"pangenome-town --town {town.city_root}/town.toml authority approve {app['id']}",
-                                               "deny": f"pangenome-town --town {town.city_root}/town.toml authority deny {app['id']} --reason \"...\""}})
-            result.append({"town": town.name, "display": town.display, "pending": pending,
+                               | {"purpose": str(app.get("purpose") or ""), "synthetic_test": synthetic_test(app), "recommendations": recommendations.get(app["id"], []),
+                                  "commands": review_commands(town, app)})
+            result.append({"town": town.name, "display": town.display, "pending": pending, "operator": (town.extra.get("authority") or {}).get("operator", ""),
                            "recommendations_for_decided": {k: v for k, v in recommendations.items() if k not in {p["id"] for p in pending}}})
         return {"authorities": result, "events": list(reversed(events))}
 
@@ -562,6 +563,22 @@ class DashboardState:
     def act(self, action: str, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
+        if action.startswith('authority/'):
+            from .authority.review import decide
+            from .authority.registrar import RegistryError
+            town = self._town(payload.get('town'))
+            if town.kind != 'authority':
+                raise ActionError('Choose a configured authority town.')
+            try:
+                with self.lock:
+                    result = decide(self._registry(town), action.split('/', 1)[1], payload,
+                                    (town.extra.get('authority') or {}).get('operator'))
+                    event = 'credential_issued' if result['state'] == 'approved' else 'application_denied'
+                    self.log.event(town.name, event, result.get('credential') or result['application'],
+                                   {'application': result['application'], 'source': 'operator-dashboard'})
+                    return result
+            except RegistryError as error:
+                raise ActionError(str(error)) from error
         if action.startswith('conversations/'):
             try:
                 return self.conversations().action(action.split('/', 1)[1], payload)
