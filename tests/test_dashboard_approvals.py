@@ -106,7 +106,7 @@ def test_browser_review_without_cli(authority, tmp_path):
             time.sleep(.25)
         pytest.fail(expression)
     try:
-        browser('start'); browser('open',base+'/#decisions')
+        browser('start'); browser('open',base+'/operations#decisions')
         wait(f'!!document.querySelector(\'[data-key="camelot/{approved}"]\')')
         browser('click',f'[data-decision="approve"][data-key="camelot/{approved}"]')
         browser('assert','document.querySelector("#decision-dialog").open')
@@ -120,7 +120,7 @@ def test_browser_review_without_cli(authority, tmp_path):
         browser('select','#decision-reason','Insufficient evidence')
         browser('click','#decision-submit')
         wait('document.querySelector("#decision-result").textContent.includes("denied")')
-        browser('open',base+'/#decisions')
+        browser('open',base+'/operations#decisions')
         wait('document.querySelector("#decisions-body").textContent.includes("nothing waiting")')
         assert registry.application(denied)['state'] == 'denied'
     finally:

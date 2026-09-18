@@ -114,7 +114,7 @@ def test_http_routes_over_loopback(mixed_towns):
         for route, key in (("/api/authority", "authorities"), ("/api/sites", "towns")):
             with urllib.request.urlopen(base + route, timeout=30) as response:
                 assert key in json.loads(response.read())
-        with urllib.request.urlopen(base + "/", timeout=30) as response:
+        with urllib.request.urlopen(base + "/operations", timeout=30) as response:
             html = response.read().decode()
         assert "loadAuthority" in html and "gateChips" in html and "—" not in html
     finally:

@@ -1,6 +1,11 @@
 # Conversations with people, towns and agents
 
-Open **Conversations** from the cockpit, or visit
+The cockpit and starter dashboard now share a message-first workspace. Open
+http://localhost:8393/ to read full messages, linked replies and structured data.
+Use **Conversations** to compose, **Towns & services** to discover contacts, and
+**Operations** for tasks, mail, sessions and approval controls.
+
+Open **Conversations** from the workspace, or visit
 http://localhost:8393/conversations on the operator laptop.
 A default cockpit uses port 8390; this installation uses 8393.
 Starter-pack operators get the same interface at
@@ -135,3 +140,5 @@ check runs the synthetic investigation; the mail check asks Themis for a brief
 acknowledgement without requesting analysis. Tests also cover stable identity,
 multiple town memberships, invalid ownership claims, causal delegation, unrelated
 reply rejection, persistence, and stopping before the next operation.
+
+Implementation and regression coverage: [shared workspace guide](https://github.com/academic-wasteland/wasteland-starter-pack/blob/main/docs/workspace.md).

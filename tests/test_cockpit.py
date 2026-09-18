@@ -167,3 +167,38 @@ def test_monitor_accepts_invalid_task_documents(cockpit):
     state.log.set_rcp(question.id, {'state': 'rejected', 'task': ['invalid', 'document']})
     status, data = request(base + '/api/monitor')
     assert status == 200 and data['messages'][0]['stage'] == 'rejected'
+
+
+def test_workspace_reads_full_envelopes_links_and_mail(cockpit):
+    state, base, _ = cockpit
+    from pangenome_town.exchange import Envelope
+    text = 'private local message ' * 500 + 'needle at end'
+    question = Envelope.new('question', 'ubar', 'yamatai', {'text': text, 'variants': [{'gene': 'FBN1'}]})
+    answer = Envelope.new('answer', 'yamatai', 'ubar', {'text': 'Observed reply'}, in_reply_to=question.id)
+    unrelated = Envelope.new('question', 'ubar', 'yamatai', {'text': 'Unrelated'})
+    for message in (question, answer, unrelated):
+        state.log.record(message, town='ubar', direction='received', status='received')
+    status, view = request(base + '/api/workspace?id=' + question.id + '&q=needle')
+    assert status == 200
+    assert [m['id'] for m in view['messages']] == [question.id]
+    assert view['detail']['message']['text'] == text
+    assert view['detail']['message']['payload']['variants'] == [{'gene': 'FBN1'}]
+    assert [m['id'] for m in view['detail']['related']] == [answer.id]
+    assert view['access']['mode'] == 'cockpit'
+    assert state.token not in json.dumps(view)
+    status, mailbox = request(base + '/api/workspace?mail=ubar&id=m2')
+    assert status == 200 and mailbox['detail']['message']['text'] == 'b'
+    assert mailbox['detail']['message']['state'] == 'unread'
+    assert request(base + '/api/workspace?mail=external')[0] == 400
+    assert request(base + '/api/workspace', headers={'Host': 'evil.example'})[0] == 403
+    assert request(base + '/api/mail/reply', body={'town': 'ubar', 'id': 'm2', 'body': 'reply'})[0] == 403
+
+
+def test_workspace_and_operations_have_distinct_entry_points(cockpit):
+    _state, base, _ = cockpit
+    for path in ('/', '/conversations'):
+        status, page = request(base + path)
+        assert status == 200 and 'Read what is happening' in page
+        assert '__TOKEN_HEADER__' not in page and 'X-Cockpit-Token' in page
+    status, page = request(base + '/operations')
+    assert status == 200 and 'pause-watch' in page and 'authority' in page

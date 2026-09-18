@@ -211,6 +211,29 @@ class DashboardState:
         return {"towns": sorted(peers.values(), key=lambda p: (not p["recently_seen"], p["name"])), "relays": relays}
 
     # Exchanges ------------------------------------------------------------------------
+    def workspace(self, selected=None, mailbox=None, search=''):
+        from wasteland.workspace import conversation_messages, envelope, project
+        errors = []
+        if mailbox:
+            mail_view = self.mail_list(mailbox)
+            if mail_view.get('error'):
+                errors.append(str(mail_view['error']))
+            messages = [{'id': str(m['id']), 'parent': None, 'sender': mailbox + '/' + str(m.get('from') or 'unknown'),
+                         'recipient': mailbox + '/' + str(m.get('to') or 'unknown'),
+                         'text': m.get('body') or '', 'created': m.get('created_at'),
+                         'state': 'read' if m.get('read') else 'unread', 'kind': 'mail', 'operation': m.get('subject') or 'Mail',
+                         'payload': m, 'source': 'mail', 'conversation': None}
+                        for m in mail_view['messages']]
+        else:
+            rows = self.log.list(limit=400)
+            if selected and not any(row['id'] == selected for row in rows):
+                older = self.log.get(selected)
+                if older:
+                    rows.append(older)
+            messages = [envelope(row['envelope'], status=row['status'], source='exchange') for row in rows]
+            messages.extend(conversation_messages(self.conversations().store))
+        return project(messages, selected=selected, errors=errors, managed=self.towns, mode='cockpit', search=search)
+
     def exchanges(self, limit: int = 100) -> list[dict[str, Any]]:
         messages = self.log.list(limit=limit)
         by_id = {message["id"]: message for message in messages}
@@ -454,8 +477,8 @@ class DashboardState:
             except Exception as error:  # noqa: BLE001
                 result.append({"town": town.name, "error": f"{type(error).__name__}: {error}"})
                 continue
-            from .cli_resources import review_commands
             from .authority.review import synthetic_test
+            from .cli_resources import review_commands
             pending = []
             for app in applications:
                 if app.get("state") != "pending":
@@ -564,8 +587,8 @@ class DashboardState:
         if not isinstance(payload, dict):
             raise ActionError("body must be a JSON object")
         if action.startswith('authority/'):
-            from .authority.review import decide
             from .authority.registrar import RegistryError
+            from .authority.review import decide
             town = self._town(payload.get('town'))
             if town.kind != 'authority':
                 raise ActionError('Choose a configured authority town.')
@@ -951,15 +974,17 @@ def make_handler(state: DashboardState) -> type[BaseHTTPRequestHandler]:
             try:
                 if not self._loopback():
                     return
-                if route == '/conversations':
+                if route in ('/', '/conversations'):
                     import wasteland.conversations
                     page = Path(wasteland.conversations.__file__).with_name('conversations.html').read_text().replace('__TOKEN_HEADER__', 'X-Cockpit-Token').replace('__TOKEN__', state.token)
                     self._send(HTTPStatus.OK, page.encode(), 'text/html; charset=utf-8')
+                elif route == '/api/workspace':
+                    self._json(HTTPStatus.OK, state.workspace(query.get('id', [None])[0], query.get('mail', [None])[0], query.get('q', [''])[0][:500]))
                 elif route == '/api/conversations':
                     self._json(HTTPStatus.OK, state.conversations().snapshot(query.get('id', [None])[0]))
                 elif route == '/api/conversations/report':
                     self._send(HTTPStatus.OK, state.conversations().report(query.get('id', [''])[0]), 'application/pdf')
-                elif route == "/":
+                elif route == "/operations":
                     page = HTML_PATH.read_text(encoding="utf-8").replace("__COCKPIT_TOKEN__", state.token).replace("__AGENTSVIEW_URL__", state.agentsview_url)
                     self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif route == "/demo":
