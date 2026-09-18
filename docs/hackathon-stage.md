@@ -286,7 +286,11 @@ Audio regeneration instructions and model provenance are in
 
 ## Public website: recorded playback
 
-The public version at **https://leechuck.de/academic-wasteland/** is an explicitly
+The public landing page at **https://leechuck.de/academic-wasteland/** is the live
+observatory: relay heartbeats, public traffic metadata and FAIRhaven descriptions.
+It exposes no private message bodies or operator controls.
+
+The demo at **https://leechuck.de/academic-wasteland/replay.html** is an explicitly
 labelled replay of recorded real runs. It serves static files only. It retains
 narrated auto-run, synchronized pause/resume, stop, independent case resets,
 cryptographic inspection and complete aggregate downloads. It has no connection

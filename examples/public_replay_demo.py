@@ -9,7 +9,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--url', default='https://leechuck.de/academic-wasteland/')
+    parser.add_argument('--url', default='https://leechuck.de/academic-wasteland/replay.html')
     parser.add_argument('--screenshot', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='public-replay-browser-', ignore_cleanup_errors=True) as home:

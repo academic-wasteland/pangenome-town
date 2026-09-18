@@ -76,13 +76,13 @@ def build(output, records, prefix):
             content = content.replace('grants its demo approvals', 'replays its recorded demo approvals')
         (assets / dest).write_text(content)
     banner = '<aside style="padding:10px 24px;background:#292c1c;color:#ebce91;font:14px/1.5 sans-serif"><strong>Recorded real runs · interactive playback.</strong> Audio and controls replay captured actions; no new approval, upload or cluster job is performed. Replay timing is shortened; event timestamps are from the real run. Signatures and aggregate results are inspectable. Each case runs and resets independently.</aside>'
-    for source, dest in [('demo_stage.html', 'index.html'), ('demo_cluster.html', 'visitor.html')]:
+    for source, dest in [('demo_stage.html', 'replay.html'), ('demo_cluster.html', 'visitor.html')]:
         page = (SOURCE / source).read_text().replace('__COCKPIT_TOKEN__', 'public-replay-no-credentials')
         page = page.replace('<body>', '<body>' + banner)
         page = page.replace(' / live stage', ' / recorded demos')
         page = re.sub(r'<a href="/"[^>]*>Open cockpit</a>', '', page)
         page = page.replace('href="/demo/visitor"', f'href="{prefix}visitor.html"')
-        page = page.replace('href="/demo"', f'href="{prefix}"').replace('href="/"', f'href="{prefix}"')
+        page = page.replace('href="/demo"', f'href="{prefix}replay.html"').replace('href="/"', f'href="{prefix}"')
         page = page.replace('/demo-assets/', prefix + 'assets/')
         page = page.replace('<script>\n', f'<script>window.DEMO_REPLAY_BASE={json.dumps(prefix)};</script><script src="{prefix}assets/replay.js"></script><script>\n', 1)
         if source == 'demo_cluster.html':
@@ -91,6 +91,8 @@ def build(output, records, prefix):
             page = page.replace('Real Slurm execution · demonstration IRB credentials', 'Recorded real Slurm execution · demonstration IRB credentials')
             page = page.replace('Scheduler states are read from DDBJ, not scripted.', 'Scheduler observations were recorded from the real DDBJ run.')
         (output / dest).write_text(page)
+    import wasteland
+    (output / 'index.html').write_text((Path(wasteland.__file__).with_name('observatory.html')).read_text())
 
 
 def main():
