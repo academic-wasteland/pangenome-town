@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "wasteland-starter-pack @ git+https://github.com/academic-wasteland/wasteland-starter-pack@540e21c8ac29c10e706ca3dc1c994f5a4cac9a25",
+  "wasteland-starter-pack @ git+https://github.com/academic-wasteland/wasteland-starter-pack@9328e7b7a511bb82960b523d349f5e38589be1e3",
   "cryptography>=43",
   "numpy>=1.26,<3",
   "reportlab>=4,<5",
